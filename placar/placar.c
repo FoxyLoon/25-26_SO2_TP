@@ -61,13 +61,62 @@ BOOL inicializar(EstadoPlacar *estado, int argc, TCHAR *argv[])
      * - Se argv[1] existir, copiar para estado->nomePipe e guardar no registry
      * - Caso contrario, tentar ler do registry com lerNomePipeDoRegistry()
      * - Se nenhum dos dois tiver o nome do pipe, imprimir erro e retornar FALSE
-     * - Criar o evento manual-reset "notificar" com CreateEvent()
+     * - Criar o evento manual-reset "EVENT_NOTIFICAR" com CreateEvent()
      * - Criar o waitable timer com CreateWaitableTimer()
      */
-    return FALSE; /* substituir pelo resultado real */
+
+	srand((unsigned int)time(NULL)); /* para gerarIdentificadorAleatorio() */
+
+    InitializeCriticalSection(&estado->cs);
+
+	EnterCriticalSection(&estado->cs);
+	estado->identificador = 0;
+	estado->ligado = FALSE;
+	estado->terminar = FALSE;
+	estado->temAlerta = FALSE;
+	LeaveCriticalSection(&estado->cs);
+
+    if(argv[1] != NULL) {
+        _tcsncpy(estado->nomePipe, argv[1], MAX_PATH);
+        estado->nomePipe[MAX_PATH-1] = _T('\0'); /* garantir terminacao */
+        if (!guardarNomePipeNoRegistry(estado->nomePipe)) {
+            _tprintf(_T("Erro ao guardar nome do pipe no registry.\n"));
+            return FALSE;
+        }
+    } else {
+        if (!lerNomePipeDoRegistry(estado->nomePipe, MAX_PATH)) {
+            _tprintf(_T("Erro: nome do pipe nao fornecido e nao encontrado no registry.\n"));
+            return FALSE;
+        }
+	}
+
+    estado->hEventNotificar = CreateEvent(
+        NULL,
+        TRUE,
+        FALSE,
+        EVENT_NOTIFICAR
+    );
+    if (estado->hEventNotificar == NULL) {
+        _tprintf(_T("Erro ao criar evento: %lu\n"), GetLastError());
+        return FALSE;
+    }
+
+    estado->hWaitableTimer = CreateWaitableTimer(
+        NULL,
+        TRUE,
+        NULL
+    );
+    if (estado->hWaitableTimer == NULL) {
+        _tprintf(_T("Erro ao criar waitable timer: %lu\n"), GetLastError());
+        CloseHandle(estado->hEventNotificar);
+        return FALSE;
+    }
+    
+    
+    return TRUE;
 }
 
-void libertar(EstadoPlacar *estado)
+BOOL libertar(EstadoPlacar *estado)
 {
     /*
      * TODO:
@@ -75,6 +124,20 @@ void libertar(EstadoPlacar *estado)
      * - Fechar hWaitableTimer com CloseHandle()
      * - Destruir a CRITICAL_SECTION com DeleteCriticalSection()
      */
+
+    if (!CloseHandle(estado->hEventNotificar)){
+		_tprintf(_T("Erro ao fechar evento: %lu\n"), GetLastError());
+		return FALSE;
+    }
+
+    if (!CloseHandle(estado->hWaitableTimer)){
+		_tprintf(_T("Erro ao fechar waitable timer: %lu\n"), GetLastError());
+		return FALSE;
+    }
+
+    DeleteCriticalSection(&estado->cs);
+
+    return TRUE;
 }
 
 /* -----------------------------------------------------------------------
@@ -91,7 +154,24 @@ BOOL lerNomePipeDoRegistry(TCHAR *buffer, DWORD tamanho)
      * - Fechar a chave com RegCloseKey()
      * - Retornar TRUE em caso de sucesso, FALSE se a chave/valor nao existir
      */
-    return FALSE;
+
+    if (!RegOpenKey(HKEY_CURRENT_USER, _T("Software\\TrabSO2"), NULL)) {
+		_tprintf(_T("Erro ao abrir chave do registry.\n"));
+		return FALSE;
+    }
+
+	if (!RegQueryValueEx(HKEY_CURRENT_USER, _T("NPIPE"), NULL, NULL, (LPBYTE)buffer, &tamanho)) {
+        _tprintf(_T("Erro ao ler valor do registry.\n"));
+        RegCloseKey(HKEY_CURRENT_USER);
+        return FALSE;
+	}
+
+	if (!RegCloseKey(HKEY_CURRENT_USER)) {
+        _tprintf(_T("Erro ao fechar chave do registry.\n"));
+        return FALSE;
+	}
+
+    return TRUE;
 }
 
 BOOL guardarNomePipeNoRegistry(const TCHAR *nomePipe)
@@ -103,7 +183,25 @@ BOOL guardarNomePipeNoRegistry(const TCHAR *nomePipe)
      * - Fechar a chave com RegCloseKey()
      * - Retornar TRUE em caso de sucesso
      */
-    return FALSE;
+
+	HKEY hKey;
+    if (RegCreateKeyEx(HKEY_CURRENT_USER, _T("Software\\TrabSO2"), 0, NULL, 0, KEY_WRITE, NULL, &hKey, NULL) != ERROR_SUCCESS) {
+        _tprintf(_T("Erro ao criar/abrir chave do registry.\n"));
+        return FALSE;
+	}
+
+    if (RegSetValueEx(hKey, _T("NPIPE"), 0, REG_SZ, (const BYTE *)nomePipe, (DWORD)((_tcslen(nomePipe) + 1) * sizeof(TCHAR))) != ERROR_SUCCESS) {
+        _tprintf(_T("Erro ao escrever valor no registry.\n"));
+        RegCloseKey(hKey);
+        return FALSE;
+	}
+
+    if (RegCloseKey(hKey) != ERROR_SUCCESS) {
+        _tprintf(_T("Erro ao fechar chave do registry.\n"));
+		return FALSE;
+	}
+
+    return TRUE;
 }
 
 /* -----------------------------------------------------------------------
@@ -224,6 +322,10 @@ void apresentarAlerta(const MSG_ALERTA *alerta)
      * - Mostrar: "DD/MM/AAAA (HH:MM:SS): '<msg>'"
      * Exemplo:   "23/03/2026 (13:51:10): 'A7 Norte - Acidente Km 34 - Lento'"
      */
+
+    TCHAR datahora[32];
+    obterDataHoraAtual(datahora, 32);
+    _tprintf(_T("%s: '%s'\n"), datahora, alerta->msg);
 }
 
 void apresentarFimAlerta(void)
@@ -258,6 +360,13 @@ void obterDataHoraAtual(TCHAR *buffer, DWORD tamanho)
      * - Obter hora local com GetLocalTime() -> SYSTEMTIME
      * - Formatar em "DD/MM/AAAA (HH:MM:SS)" com _sntprintf()
      */
+
+    SYSTEMTIME st;
+    GetLocalTime(&st);
+    _sntprintf(buffer, tamanho, _T("%02d/%02d/%04d (%02d:%02d:%02d)"),
+        st.wDay, st.wMonth, st.wYear,
+        st.wHour, st.wMinute, st.wSecond);
+
 }
 
 DWORD gerarIdentificadorAleatorio(void)
@@ -267,5 +376,6 @@ DWORD gerarIdentificadorAleatorio(void)
      * - Retornar um valor aleatorio entre 1 e 100 com rand()
      * - (O identificador real sera atribuido pelo central na M2)
      */
-    return 0;
+
+    return rand() % 100 + 1;
 }

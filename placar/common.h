@@ -16,7 +16,7 @@
 
 #define EVENT_NOTIFICAR     _T("notificar")
 
-/* Tipos das mensagens - Placar -> Central */
+ /* Tipos das mensagens - Placar -> Central */
 #define MSG_TIPO_LIGAR      1
 #define MSG_TIPO_DESLIGAR   2
 #define MSG_TIPO_FIM_ALERTA 3
@@ -31,27 +31,27 @@
  * Estruturas de comunicacao - Named Pipes (Placar <-> Central)
  * ----------------------------------------------------------------------- */
 
-/* Placar -> Central: pedidos/atualizacoes */
+ /* Placar -> Central: pedidos/atualizacoes */
 typedef struct {
-    BYTE tipo; /* MSG_TIPO_LIGAR | MSG_TIPO_DESLIGAR | MSG_TIPO_FIM_ALERTA */
+	BYTE tipo; /* MSG_TIPO_LIGAR | MSG_TIPO_DESLIGAR | MSG_TIPO_FIM_ALERTA */
 } MSG_CMD_PC;
 
 /* Central -> Placar: atribuicao de identificador */
 typedef struct {
-    BYTE  tipo;          /* MSG_TIPO_ID */
-    DWORD identificador;
+	BYTE  tipo;          /* MSG_TIPO_ID */
+	DWORD identificador;
 } MSG_ID;
 
 /* Central -> Placar: novo alerta */
 typedef struct {
-    BYTE  tipo;          /* MSG_TIPO_ALERTA */
-    TCHAR msg[MAX_MSG_LEN];
-    DWORD duracao;       /* segundos */
+	BYTE  tipo;          /* MSG_TIPO_ALERTA */
+	TCHAR msg[MAX_MSG_LEN];
+	DWORD duracao;       /* segundos */
 } MSG_ALERTA;
 
 /* Central -> Placar: cancelar alerta ou encerrar plataforma */
 typedef struct {
-    BYTE tipo; /* MSG_TIPO_CANCELAR | MSG_TIPO_ENCERRAR */
+	BYTE tipo; /* MSG_TIPO_CANCELAR | MSG_TIPO_ENCERRAR */
 } MSG_CMD_CP;
 
 /* -----------------------------------------------------------------------
@@ -59,10 +59,10 @@ typedef struct {
  * ----------------------------------------------------------------------- */
 
 typedef struct {
-    DWORD identificador;
-    DWORD duracao;
-    TCHAR msg[MAX_MSG_LEN];
-    BOOL  desligar;
+	DWORD identificador;
+	DWORD duracao;
+	TCHAR msg[MAX_MSG_LEN];
+	BOOL  desligar;
 } SHM_ALERTA;
 
 #endif /* COMMON_H */
