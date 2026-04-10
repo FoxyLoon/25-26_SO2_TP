@@ -36,7 +36,7 @@ typedef struct {
 
 /* Inicializacao e limpeza */
 BOOL  inicializar(EstadoPlacar *estado, int argc, TCHAR *argv[]);
-void  libertar(EstadoPlacar *estado);
+BOOL  libertar(EstadoPlacar *estado);
 
 /* Registry */
 BOOL  lerNomePipeDoRegistry(TCHAR *buffer, DWORD tamanho);

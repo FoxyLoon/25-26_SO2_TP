@@ -221,6 +221,30 @@ DWORD WINAPI threadUtilizador(LPVOID param)
      * - Sair do loop quando estado->terminar for TRUE
      */
 
+    while (1)
+    {
+        _tprintf(_T("> ")); /* prompt */
+        if (_fgetts(cmd, PLACAR_MAX_CMD_LEN, stdin) == NULL) {
+            _tprintf(_T("Erro ao ler comando. A terminar.\n"));
+            break;
+        }
+        
+        /* Remover '\n' final */
+        size_t len = _tcslen(cmd);
+        if (len > 0 && cmd[len - 1] == _T('\n')) {
+            cmd[len - 1] = _T('\0');
+        }
+        
+        processarComando(cmd, estado);
+        
+        EnterCriticalSection(&estado->cs);
+        if (estado->terminar) {
+            LeaveCriticalSection(&estado->cs);
+            break;
+        }
+        LeaveCriticalSection(&estado->cs);
+    }
+
     return 0;
 }
 
@@ -232,6 +256,16 @@ void processarComando(const TCHAR *cmd, EstadoPlacar *estado)
      * - Comparar cmd com PLACAR_CMD_DESLIGAR -> executarDesligar()
      * - Caso contrario, mostrar mensagem de comando invalido
      */
+
+    if (_tcscmp(cmd, PLACAR_CMD_LIGAR) == 0) {
+		executarLigar(estado);
+	}
+	else if (_tcscmp(cmd, PLACAR_CMD_DESLIGAR) == 0) {
+        executarDesligar(estado);
+    }
+    else {
+        _tprintf(_T("Comando invalido: '%s'\n"), cmd);
+    }
 }
 
 void executarLigar(EstadoPlacar *estado)
@@ -246,6 +280,18 @@ void executarLigar(EstadoPlacar *estado)
      *
      * (M2): substituir por comunicacao real com o central via named pipe
      */
+
+	EnterCriticalSection(&estado->cs);
+    if (estado->ligado) {
+        _tprintf(_T("Placar ja esta ligado.\n"));
+    }
+    else {
+        estado->identificador = gerarIdentificadorAleatorio();
+        estado->ligado = TRUE;
+        _tprintf(_T("Identificador = %lu\n"), estado->identificador);
+	}
+	LeaveCriticalSection(&estado->cs);
+
 }
 
 void executarDesligar(EstadoPlacar *estado)
@@ -260,6 +306,16 @@ void executarDesligar(EstadoPlacar *estado)
      * (M2): antes de terminar, enviar MSG_CMD_PC com tipo=MSG_TIPO_DESLIGAR
      *       ao central via named pipe
      */
+
+	EnterCriticalSection(&estado->cs);
+	if (!estado->ligado) {
+        _tprintf(_T("Placar ja esta desligado.\n"));
+    }
+    else {
+        cancelarAlertaAtivo(estado);
+        estado->ligado = FALSE;
+        estado->terminar = TRUE;
+    }
 }
 
 /* -----------------------------------------------------------------------
@@ -336,6 +392,11 @@ void apresentarFimAlerta(void)
      * TODO:
      * - Mostrar: "DD/MM/AAAA (HH:MM:SS): '---'"
      */
+
+	TCHAR datahora[32];
+    obterDataHoraAtual(datahora, 32);
+	_tprintf(_T("%s: '---'\n"), datahora);
+
 }
 
 void cancelarAlertaAtivo(EstadoPlacar *estado)
@@ -347,6 +408,15 @@ void cancelarAlertaAtivo(EstadoPlacar *estado)
      * - Definir estado->temAlerta = FALSE
      * - (Opcional M1) Mostrar mensagem de alerta cancelado
      */
+
+	EnterCriticalSection(&estado->cs);
+    if (estado->temAlerta) {
+        CancelWaitableTimer(estado->hWaitableTimer);
+        estado->temAlerta = FALSE;
+        _tprintf(_T("Alerta cancelado.\n"));
+	}
+	LeaveCriticalSection(&estado->cs);
+
 }
 
 /* -----------------------------------------------------------------------
