@@ -77,9 +77,7 @@ BOOL inicializar(EstadoPlacar *estado, int argc, TCHAR *argv[])
 	LeaveCriticalSection(&estado->cs);
 
     if(argv[1] != NULL) {
-
-        _tcsncpy_s(estado->nomePipe, argv[1], MAX_PATH, _TRUNCATE);
-        estado->nomePipe[MAX_PATH-1] = _T('\0'); /* garantir terminacao */
+        _tcsncpy_s(estado->nomePipe, MAX_PATH, argv[1], _TRUNCATE);
         if (!guardarNomePipeNoRegistry(estado->nomePipe)) {
             _tprintf(_T("Erro ao guardar nome do pipe no registry.\n"));
             return FALSE;
@@ -156,22 +154,22 @@ BOOL lerNomePipeDoRegistry(TCHAR *buffer, DWORD tamanho)
      * - Retornar TRUE em caso de sucesso, FALSE se a chave/valor nao existir
      */
 
-    if (!RegOpenKey(HKEY_CURRENT_USER, _T("Software\\TrabSO2"), NULL)) {
-		_tprintf(_T("Erro ao abrir chave do registry.\n"));
-		return FALSE;
+    HKEY hKey;
+
+    if (RegOpenKeyEx(HKEY_CURRENT_USER, REGISTRY_NPIPE_VAL, 0, KEY_READ, &hKey) != ERROR_SUCCESS) {
+        _tprintf(_T("Erro ao abrir chave do registry.\n"));
+        return FALSE;
     }
 
-	if (!RegQueryValueEx(HKEY_CURRENT_USER, _T("NPIPE"), NULL, NULL, (LPBYTE)buffer, &tamanho)) {
+    DWORD tipo = REG_SZ;
+    DWORD tamanhoBytes = tamanho * sizeof(TCHAR);
+    if (RegQueryValueEx(hKey, _T("NPIPE"), NULL, &tipo, (LPBYTE)buffer, &tamanhoBytes) != ERROR_SUCCESS) {
         _tprintf(_T("Erro ao ler valor do registry.\n"));
-        RegCloseKey(HKEY_CURRENT_USER);
+        RegCloseKey(hKey);
         return FALSE;
-	}
+    }
 
-	if (!RegCloseKey(HKEY_CURRENT_USER)) {
-        _tprintf(_T("Erro ao fechar chave do registry.\n"));
-        return FALSE;
-	}
-
+    RegCloseKey(hKey);
     return TRUE;
 }
 
@@ -308,15 +306,17 @@ void executarDesligar(EstadoPlacar *estado)
      *       ao central via named pipe
      */
 
-	EnterCriticalSection(&estado->cs);
-	if (!estado->ligado) {
+    EnterCriticalSection(&estado->cs);
+    if (!estado->ligado) {
         _tprintf(_T("Placar ja esta desligado.\n"));
+        LeaveCriticalSection(&estado->cs);
+        return;
     }
-    else {
-        cancelarAlertaAtivo(estado);
-        estado->ligado = FALSE;
-        estado->terminar = TRUE;
-    }
+
+    cancelarAlertaAtivo(estado);
+    estado->ligado = FALSE;
+    estado->terminar = TRUE;
+    LeaveCriticalSection(&estado->cs);
 }
 
 /* -----------------------------------------------------------------------
@@ -365,14 +365,14 @@ DWORD WINAPI threadAlertas(LPVOID param)
         LeaveCriticalSection(&estado->cs);
 
         // Aguarda por um novo alerta ou pelo fim do tempo do alerta atual
-        dwWait = WaitForMultipleObjects(2, hWaitHandles, FALSE, 500); // 500ms timeout para check de terminação
+        dwWait = WaitForMultipleObjects(2, hWaitHandles, FALSE, 500); // 500ms timeout para check de terminaï¿½ï¿½o
 
         switch (dwWait) {
         case WAIT_OBJECT_0: // Evento "notificar" disparou
             ResetEvent(estado->hEventNotificar); // Reset manual conforme enunciado [cite: 502]
             receberAlerta(estado);
 
-            // Armar o Waitable Timer com a duração recebida
+            // Armar o Waitable Timer com a duraï¿½ï¿½o recebida
             if (estado->temAlerta) {
                 LARGE_INTEGER liDueTime;
                 // O tempo deve ser negativo para valores relativos em unidades de 100 nanosegundos
@@ -419,15 +419,15 @@ void receberAlerta(EstadoPlacar *estado)
     DWORD dwType = REG_BINARY;
     DWORD dwSize = sizeof(MSG_ALERTA);
 
-    // Na M1, a "comunicação" é feita via Registry simulando o pipe [cite: 502, 503]
+    // Na M1, a "comunicaï¿½ï¿½o" ï¿½ feita via Registry simulando o pipe [cite: 502, 503]
     if (RegOpenKeyEx(HKEY_CURRENT_USER, REGISTRY_KEY, 0, KEY_READ, &hKey) == ERROR_SUCCESS) {
 
-        // Lê o valor binário cujo nome é o "canal" (nomePipe) definido no início
+        // Lï¿½ o valor binï¿½rio cujo nome ï¿½ o "canal" (nomePipe) definido no inï¿½cio
         if (RegQueryValueEx(hKey, estado->nomePipe, NULL, &dwType, (LPBYTE)&novoAlerta, &dwSize) == ERROR_SUCCESS) {
 
             EnterCriticalSection(&estado->cs);
 
-            // Se já existia um alerta, o novo cancela o anterior [cite: 375, 581]
+            // Se jï¿½ existia um alerta, o novo cancela o anterior [cite: 375, 581]
             if (estado->temAlerta) {
                 CancelWaitableTimer(estado->hWaitableTimer);
             }
@@ -449,8 +449,6 @@ void receberAlerta(EstadoPlacar *estado)
 
 void apresentarAlerta(const MSG_ALERTA *alerta)
 {
-    TCHAR datahora[32];
-    obterDataHoraAtual(datahora, 32);
     /*
      * TODO:
      * - Mostrar: "DD/MM/AAAA (HH:MM:SS): '<msg>'"
@@ -462,8 +460,6 @@ void apresentarAlerta(const MSG_ALERTA *alerta)
 
 void apresentarFimAlerta(void)
 {
-    TCHAR datahora[32];
-    obterDataHoraAtual(datahora, 32);
     /*
      * TODO:
      * - Mostrar: "DD/MM/AAAA (HH:MM:SS): '---'"
