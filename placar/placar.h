@@ -7,8 +7,8 @@
  * Constantes do programa placar
  * ----------------------------------------------------------------------- */
 
-#define PLACAR_CMD_LIGAR    _T("ligar")
-#define PLACAR_CMD_DESLIGAR _T("desligar")
+#define PLACAR_CMD_LIGAR    _T("liga")
+#define PLACAR_CMD_DESLIGAR _T("desliga")
 
 #define PLACAR_MAX_CMD_LEN  64
 

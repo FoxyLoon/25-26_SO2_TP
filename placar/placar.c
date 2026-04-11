@@ -65,8 +65,6 @@ BOOL inicializar(EstadoPlacar *estado, int argc, TCHAR *argv[])
      * - Criar o waitable timer com CreateWaitableTimer()
      */
 
-	srand((unsigned int)time(NULL)); /* para gerarIdentificadorAleatorio() */
-
     InitializeCriticalSection(&estado->cs);
 
 	EnterCriticalSection(&estado->cs);
@@ -156,14 +154,14 @@ BOOL lerNomePipeDoRegistry(TCHAR *buffer, DWORD tamanho)
 
     HKEY hKey;
 
-    if (RegOpenKeyEx(HKEY_CURRENT_USER, REGISTRY_NPIPE_VAL, 0, KEY_READ, &hKey) != ERROR_SUCCESS) {
+    if (RegOpenKeyEx(HKEY_CURRENT_USER, REGISTRY_KEY, 0, KEY_READ, &hKey) != ERROR_SUCCESS) {
         _tprintf(_T("Erro ao abrir chave do registry.\n"));
         return FALSE;
     }
 
     DWORD tipo = REG_SZ;
     DWORD tamanhoBytes = tamanho * sizeof(TCHAR);
-    if (RegQueryValueEx(hKey, _T("NPIPE"), NULL, &tipo, (LPBYTE)buffer, &tamanhoBytes) != ERROR_SUCCESS) {
+    if (RegQueryValueEx(hKey, REGISTRY_NPIPE_VAL, NULL, &tipo, (LPBYTE)buffer, &tamanhoBytes) != ERROR_SUCCESS) {
         _tprintf(_T("Erro ao ler valor do registry.\n"));
         RegCloseKey(hKey);
         return FALSE;
@@ -259,6 +257,7 @@ void processarComando(const TCHAR *cmd, EstadoPlacar *estado)
     if (_tcscmp(cmd, PLACAR_CMD_LIGAR) == 0) {
 		executarLigar(estado);
 	}
+
 	else if (_tcscmp(cmd, PLACAR_CMD_DESLIGAR) == 0) {
         executarDesligar(estado);
     }
@@ -454,7 +453,8 @@ void apresentarAlerta(const MSG_ALERTA *alerta)
      * - Mostrar: "DD/MM/AAAA (HH:MM:SS): '<msg>'"
      * Exemplo:   "23/03/2026 (13:51:10): 'A7 Norte - Acidente Km 34 - Lento'"
      */
-
+    TCHAR datahora[32];
+    obterDataHoraAtual(datahora, 32);
     _tprintf(_T("%s: '%s'\n"), datahora, alerta->msg);
 }
 
@@ -464,7 +464,8 @@ void apresentarFimAlerta(void)
      * TODO:
      * - Mostrar: "DD/MM/AAAA (HH:MM:SS): '---'"
      */
-
+    TCHAR datahora[32];
+    obterDataHoraAtual(datahora, 32);
 	_tprintf(_T("%s: '---'\n"), datahora);
 
 }
@@ -511,11 +512,11 @@ void obterDataHoraAtual(TCHAR *buffer, DWORD tamanho)
 
 DWORD gerarIdentificadorAleatorio(void)
 {
+    srand((unsigned int)time(NULL)); /* para gerarIdentificadorAleatorio() */
     /*
      * TODO (M1 apenas):
      * - Retornar um valor aleatorio entre 1 e 100 com rand()
      * - (O identificador real sera atribuido pelo central na M2)
      */
-
     return rand() % 100 + 1;
 }
