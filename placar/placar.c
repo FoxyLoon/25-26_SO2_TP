@@ -77,8 +77,7 @@ BOOL inicializar(EstadoPlacar *estado, int argc, TCHAR *argv[])
 	LeaveCriticalSection(&estado->cs);
 
     if(argv[1] != NULL) {
-        _tcsncpy(estado->nomePipe, argv[1], MAX_PATH);
-        estado->nomePipe[MAX_PATH-1] = _T('\0'); /* garantir terminacao */
+        _tcsncpy_s(estado->nomePipe, MAX_PATH, argv[1], _TRUNCATE);
         if (!guardarNomePipeNoRegistry(estado->nomePipe)) {
             _tprintf(_T("Erro ao guardar nome do pipe no registry.\n"));
             return FALSE;
@@ -155,22 +154,22 @@ BOOL lerNomePipeDoRegistry(TCHAR *buffer, DWORD tamanho)
      * - Retornar TRUE em caso de sucesso, FALSE se a chave/valor nao existir
      */
 
-    if (!RegOpenKey(HKEY_CURRENT_USER, _T("Software\\TrabSO2"), NULL)) {
-		_tprintf(_T("Erro ao abrir chave do registry.\n"));
-		return FALSE;
+    HKEY hKey;
+
+    if (RegOpenKeyEx(HKEY_CURRENT_USER, REGISTRY_NPIPE_VAL, 0, KEY_READ, &hKey) != ERROR_SUCCESS) {
+        _tprintf(_T("Erro ao abrir chave do registry.\n"));
+        return FALSE;
     }
 
-	if (!RegQueryValueEx(HKEY_CURRENT_USER, _T("NPIPE"), NULL, NULL, (LPBYTE)buffer, &tamanho)) {
+    DWORD tipo = REG_SZ;
+    DWORD tamanhoBytes = tamanho * sizeof(TCHAR);
+    if (RegQueryValueEx(hKey, _T("NPIPE"), NULL, &tipo, (LPBYTE)buffer, &tamanhoBytes) != ERROR_SUCCESS) {
         _tprintf(_T("Erro ao ler valor do registry.\n"));
-        RegCloseKey(HKEY_CURRENT_USER);
+        RegCloseKey(hKey);
         return FALSE;
-	}
+    }
 
-	if (!RegCloseKey(HKEY_CURRENT_USER)) {
-        _tprintf(_T("Erro ao fechar chave do registry.\n"));
-        return FALSE;
-	}
-
+    RegCloseKey(hKey);
     return TRUE;
 }
 
@@ -307,15 +306,17 @@ void executarDesligar(EstadoPlacar *estado)
      *       ao central via named pipe
      */
 
-	EnterCriticalSection(&estado->cs);
-	if (!estado->ligado) {
+    EnterCriticalSection(&estado->cs);
+    if (!estado->ligado) {
         _tprintf(_T("Placar ja esta desligado.\n"));
+        LeaveCriticalSection(&estado->cs);
+        return;
     }
-    else {
-        cancelarAlertaAtivo(estado);
-        estado->ligado = FALSE;
-        estado->terminar = TRUE;
-    }
+
+    cancelarAlertaAtivo(estado);
+    estado->ligado = FALSE;
+    estado->terminar = TRUE;
+    LeaveCriticalSection(&estado->cs);
 }
 
 /* -----------------------------------------------------------------------
@@ -371,8 +372,6 @@ void receberAlerta(EstadoPlacar *estado)
 
 void apresentarAlerta(const MSG_ALERTA *alerta)
 {
-    TCHAR datahora[32];
-    obterDataHoraAtual(datahora, 32);
     /*
      * TODO:
      * - Mostrar: "DD/MM/AAAA (HH:MM:SS): '<msg>'"
@@ -386,8 +385,6 @@ void apresentarAlerta(const MSG_ALERTA *alerta)
 
 void apresentarFimAlerta(void)
 {
-    TCHAR datahora[32];
-    obterDataHoraAtual(datahora, 32);
     /*
      * TODO:
      * - Mostrar: "DD/MM/AAAA (HH:MM:SS): '---'"
@@ -433,7 +430,7 @@ void obterDataHoraAtual(TCHAR *buffer, DWORD tamanho)
 
     SYSTEMTIME st;
     GetLocalTime(&st);
-    _sntprintf(buffer, tamanho, _T("%02d/%02d/%04d (%02d:%02d:%02d)"),
+    _sntprintf_s(buffer, tamanho, _TRUNCATE, _T("%02d/%02d/%04d (%02d:%02d:%02d)"),
         st.wDay, st.wMonth, st.wYear,
         st.wHour, st.wMinute, st.wSecond);
 
