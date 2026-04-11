@@ -77,7 +77,8 @@ BOOL inicializar(EstadoPlacar *estado, int argc, TCHAR *argv[])
 	LeaveCriticalSection(&estado->cs);
 
     if(argv[1] != NULL) {
-        _tcsncpy(estado->nomePipe, argv[1], MAX_PATH);
+
+        _tcsncpy_s(estado->nomePipe, argv[1], MAX_PATH, _TRUNCATE);
         estado->nomePipe[MAX_PATH-1] = _T('\0'); /* garantir terminacao */
         if (!guardarNomePipeNoRegistry(estado->nomePipe)) {
             _tprintf(_T("Erro ao guardar nome do pipe no registry.\n"));
@@ -346,6 +347,55 @@ DWORD WINAPI threadAlertas(LPVOID param)
      * - Sair do loop quando estado->terminar for TRUE
      */
 
+    HANDLE hWaitHandles[2];
+    DWORD dwWait;
+    BOOL continuar = TRUE;
+
+    hWaitHandles[0] = estado->hEventNotificar;
+    hWaitHandles[1] = estado->hWaitableTimer;
+
+    while (continuar) {
+        // Verifica se o programa deve terminar antes de bloquear
+        EnterCriticalSection(&estado->cs);
+        if (estado->terminar) {
+            continuar = FALSE;
+            LeaveCriticalSection(&estado->cs);
+            break;
+        }
+        LeaveCriticalSection(&estado->cs);
+
+        // Aguarda por um novo alerta ou pelo fim do tempo do alerta atual
+        dwWait = WaitForMultipleObjects(2, hWaitHandles, FALSE, 500); // 500ms timeout para check de terminação
+
+        switch (dwWait) {
+        case WAIT_OBJECT_0: // Evento "notificar" disparou
+            ResetEvent(estado->hEventNotificar); // Reset manual conforme enunciado [cite: 502]
+            receberAlerta(estado);
+
+            // Armar o Waitable Timer com a duração recebida
+            if (estado->temAlerta) {
+                LARGE_INTEGER liDueTime;
+                // O tempo deve ser negativo para valores relativos em unidades de 100 nanosegundos
+                liDueTime.QuadPart = -(LONGLONG)estado->alertaAtivo.duracao * 10000000LL;
+                SetWaitableTimer(estado->hWaitableTimer, &liDueTime, 0, NULL, NULL, FALSE);
+            }
+            break;
+
+        case WAIT_OBJECT_0 + 1: // O timer do alerta expirou
+            EnterCriticalSection(&estado->cs);
+            if (estado->temAlerta) {
+                apresentarFimAlerta();
+                estado->temAlerta = FALSE;
+            }
+            LeaveCriticalSection(&estado->cs);
+            break;
+
+        case WAIT_TIMEOUT:
+            // Apenas para re-verificar o loop e estado->terminar
+            break;
+        }
+    }
+
     return 0;
 }
 
@@ -363,6 +413,34 @@ void receberAlerta(EstadoPlacar *estado)
      *
      * (M2): substituir por leitura real do named pipe
      */
+
+    HKEY hKey;
+    MSG_ALERTA novoAlerta;
+    DWORD dwType = REG_BINARY;
+    DWORD dwSize = sizeof(MSG_ALERTA);
+
+    // Na M1, a "comunicação" é feita via Registry simulando o pipe [cite: 502, 503]
+    if (RegOpenKeyEx(HKEY_CURRENT_USER, REGISTRY_KEY, 0, KEY_READ, &hKey) == ERROR_SUCCESS) {
+
+        // Lê o valor binário cujo nome é o "canal" (nomePipe) definido no início
+        if (RegQueryValueEx(hKey, estado->nomePipe, NULL, &dwType, (LPBYTE)&novoAlerta, &dwSize) == ERROR_SUCCESS) {
+
+            EnterCriticalSection(&estado->cs);
+
+            // Se já existia um alerta, o novo cancela o anterior [cite: 375, 581]
+            if (estado->temAlerta) {
+                CancelWaitableTimer(estado->hWaitableTimer);
+            }
+
+            estado->alertaAtivo = novoAlerta;
+            estado->temAlerta = TRUE;
+
+            apresentarAlerta(&estado->alertaAtivo);
+
+            LeaveCriticalSection(&estado->cs);
+        }
+        RegCloseKey(hKey);
+    }
 }
 
 /* -----------------------------------------------------------------------
@@ -379,8 +457,6 @@ void apresentarAlerta(const MSG_ALERTA *alerta)
      * Exemplo:   "23/03/2026 (13:51:10): 'A7 Norte - Acidente Km 34 - Lento'"
      */
 
-    TCHAR datahora[32];
-    obterDataHoraAtual(datahora, 32);
     _tprintf(_T("%s: '%s'\n"), datahora, alerta->msg);
 }
 
@@ -393,8 +469,6 @@ void apresentarFimAlerta(void)
      * - Mostrar: "DD/MM/AAAA (HH:MM:SS): '---'"
      */
 
-	TCHAR datahora[32];
-    obterDataHoraAtual(datahora, 32);
 	_tprintf(_T("%s: '---'\n"), datahora);
 
 }
@@ -433,7 +507,7 @@ void obterDataHoraAtual(TCHAR *buffer, DWORD tamanho)
 
     SYSTEMTIME st;
     GetLocalTime(&st);
-    _sntprintf(buffer, tamanho, _T("%02d/%02d/%04d (%02d:%02d:%02d)"),
+    _sntprintf_s(buffer, tamanho, _TRUNCATE, _T("%02d/%02d/%04d (%02d:%02d:%02d)"),
         st.wDay, st.wMonth, st.wYear,
         st.wHour, st.wMinute, st.wSecond);
 
