@@ -1,7 +1,7 @@
 # Trabalho Laboratorial - SO2 2025/26
 
 # Grupo
-2024120298 Diogo Marins
+2024120298 Diogo Martins
 2024134573 Gabriel Santos
 
 ## Estrutura do projeto
