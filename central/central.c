@@ -63,7 +63,23 @@ BOOL inicializar_central(EstadoCentral *estado, int argc, TCHAR *argv[])
      * - Zerar o array estado->placares (memset ou loop)
      * - Retornar TRUE
      */
-    return FALSE; /* remover apos implementacao */
+
+	if (argc < 2) { // se argc for menor que 2, significa que o nome do pipe nao foi fornecido
+        _tprintf(_T("Uso: %s <nome_pipe>\n"), argv[0]);
+        return FALSE;
+	}
+
+	_tcscpy(estado->nomePipe, argv[1]); // copiar nome do pipe (sem prefixo)
+	_stprintf(estado->nomePipeCompleto, _T("%s%s"), PIPE_PREFIX, estado->nomePipe); // construir nome completo do pipe
+	
+    InitializeCriticalSection(&estado->cs); // inicializar a CRITICAL_SECTION
+    
+	estado->numPlacares = 0;
+	estado->proximoId = 1;
+	estado->terminar = FALSE;
+	memset(estado->placares, 0, sizeof(estado->placares));
+
+    return TRUE;
 }
 
 BOOL libertar_central(EstadoCentral *estado)
@@ -74,7 +90,15 @@ BOOL libertar_central(EstadoCentral *estado)
      * - Destruir a CRITICAL_SECTION com DeleteCriticalSection()
      * - Retornar TRUE
      */
-    return FALSE; /* remover apos implementacao */
+
+    for(int i = 0; i < MAX_PLACARES; i++) {
+        if (estado->placares[i].ativo) {
+            CloseHandle(estado->placares[i].hPipe);
+        }
+	}
+    DeleteCriticalSection(&estado->cs);
+    
+    return TRUE;
 }
 
 /* -----------------------------------------------------------------------
@@ -113,6 +137,54 @@ DWORD WINAPI threadListener(LPVOID param)
      *
      * 5. Voltar ao inicio do loop para aceitar o proximo placar
      */
+
+    while (!estado->terminar) {
+        CreateNamedPipe(
+            estado->nomePipeCompleto,
+            PIPE_ACCESS_DUPLEX,
+            PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT,
+            MAX_PLACARES,
+            PIPE_BUFFER_SIZE,
+            PIPE_BUFFER_SIZE,
+            0,
+            NULL
+        );
+
+        ConnectNamedPipe(estado->nomePipeCompleto, NULL);
+
+        EnterCriticalSection(&estado->cs);
+        int slot = encontrarSlotLivre(estado);
+
+        if (slot == -1) {
+            DisconnectNamedPipe(estado->nomePipeCompleto);
+            CloseHandle(estado->nomePipeCompleto);
+            LeaveCriticalSection(&estado->cs);
+            continue;
+        }
+
+        estado->placares[slot].hPipe = estado->nomePipeCompleto;
+        estado->placares[slot].ativo = TRUE;
+        estado->numPlacares++;
+
+        ArgThreadPlacar* arg = (ArgThreadPlacar*)malloc(sizeof(ArgThreadPlacar));
+        arg->estado = estado;
+        arg->indicePlacar = slot;
+        
+        HANDLE hThread = CreateThread(NULL, 0, threadPlacar, arg, 0, NULL);
+        if (hThread != NULL) {
+            estado->placares[slot].hThread = hThread;
+        }
+        else {
+            // Se falhou ao criar a thread, limpar o slot
+            estado->placares[slot].ativo = FALSE;
+            estado->numPlacares--;
+            free(arg);
+        }
+        
+        LeaveCriticalSection(&estado->cs);
+
+    };
+
     return 0;
 }
 
@@ -163,6 +235,53 @@ DWORD WINAPI threadPlacar(LPVOID param)
      * Em caso de erro de leitura (pipe desligado abruptamente):
      *   - removerPlacar() e sair do loop
      */
+    
+    while(estado->placares[idx].ativo) {
+        if (!receberMensagem(hPipe, buffer, PIPE_BUFFER_SIZE, &bytesLidos)) {
+            // Erro de leitura (pipe desligado)
+            removerPlacar(estado, idx);
+            break;
+        }
+        
+        BYTE tipo = buffer[0]; // Supondo que o tipo está no primeiro byte
+        
+        switch (tipo) {
+            case MSG_TIPO_LIGAR:
+                EnterCriticalSection(&estado->cs);
+                estado->placares[idx].identificador = estado->proximoId++;
+                LeaveCriticalSection(&estado->cs);
+                
+                MSG_ID msgId;
+                msgId.tipo = MSG_TIPO_ID;
+                msgId.identificador = estado->placares[idx].identificador;
+                
+                enviarMensagem(hPipe, &msgId, sizeof(msgId));
+
+                _tprintf(_T("Placar %lu registado.\n"), msgId.identificador);
+                break;
+
+            case MSG_TIPO_DESLIGAR:
+                
+                MSG_CMD_PC cmdDesligar;
+
+                cmdDesligar.tipo = MSG_TIPO_DESLIGAR;
+                enviarMensagem(hPipe, &cmdDesligar, sizeof(cmdDesligar));
+                
+                removerPlacar(estado, idx);
+                return 0; // Sair do loop
+
+            case MSG_TIPO_FIM_ALERTA:
+                EnterCriticalSection(&estado->cs);
+                estado->placares[idx].temAlerta = FALSE;
+                LeaveCriticalSection(&estado->cs);
+                break;
+
+            default:
+                // Tipo desconhecido - ignorar ou logar
+                break;
+        }
+	}
+
     return 0;
 }
 
