@@ -69,8 +69,8 @@ BOOL inicializar_central(EstadoCentral *estado, int argc, TCHAR *argv[])
         return FALSE;
 	}
 
-	_tcscpy(estado->nomePipe, argv[1]); // copiar nome do pipe (sem prefixo)
-	_stprintf(estado->nomePipeCompleto, _T("%s%s"), PIPE_PREFIX, estado->nomePipe); // construir nome completo do pipe
+	_tcscpy_s(estado->nomePipe, _countof(estado->nomePipe), argv[1]); // copiar nome do pipe (sem prefixo)
+	_sntprintf_s(estado->nomePipeCompleto, _countof(estado->nomePipeCompleto), _TRUNCATE, _T("%s%s"), PIPE_PREFIX, estado->nomePipe); // construir nome completo do pipe
 	
     InitializeCriticalSection(&estado->cs); // inicializar a CRITICAL_SECTION
     
@@ -139,7 +139,7 @@ DWORD WINAPI threadListener(LPVOID param)
      */
 
     while (!estado->terminar) {
-        CreateNamedPipe(
+        HANDLE hPipe = CreateNamedPipe(
             estado->nomePipeCompleto,
             PIPE_ACCESS_DUPLEX,
             PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT,
@@ -150,19 +150,26 @@ DWORD WINAPI threadListener(LPVOID param)
             NULL
         );
 
-        ConnectNamedPipe(estado->nomePipeCompleto, NULL);
+        if (hPipe == INVALID_HANDLE_VALUE) {
+            continue;
+        }
+
+        if (!ConnectNamedPipe(hPipe, NULL)) {
+            CloseHandle(hPipe);
+            continue;
+        }
 
         EnterCriticalSection(&estado->cs);
         int slot = encontrarSlotLivre(estado);
 
         if (slot == -1) {
-            DisconnectNamedPipe(estado->nomePipeCompleto);
-            CloseHandle(estado->nomePipeCompleto);
+            DisconnectNamedPipe(hPipe);
+            CloseHandle(hPipe);
             LeaveCriticalSection(&estado->cs);
             continue;
         }
 
-        estado->placares[slot].hPipe = estado->nomePipeCompleto;
+        estado->placares[slot].hPipe = hPipe;
         estado->placares[slot].ativo = TRUE;
         estado->numPlacares++;
 
@@ -236,7 +243,11 @@ DWORD WINAPI threadPlacar(LPVOID param)
      *   - removerPlacar() e sair do loop
      */
     
-    while(estado->placares[idx].ativo) {
+    EnterCriticalSection(&estado->cs);
+    BOOL ativo = estado->placares[idx].ativo;
+    LeaveCriticalSection(&estado->cs);
+
+    while(ativo) {
         if (!receberMensagem(hPipe, buffer, PIPE_BUFFER_SIZE, &bytesLidos)) {
             // Erro de leitura (pipe desligado)
             removerPlacar(estado, idx);
@@ -246,40 +257,45 @@ DWORD WINAPI threadPlacar(LPVOID param)
         BYTE tipo = buffer[0]; // Supondo que o tipo está no primeiro byte
         
         switch (tipo) {
-            case MSG_TIPO_LIGAR:
-                EnterCriticalSection(&estado->cs);
-                estado->placares[idx].identificador = estado->proximoId++;
-                LeaveCriticalSection(&estado->cs);
-                
-                MSG_ID msgId;
-                msgId.tipo = MSG_TIPO_ID;
-                msgId.identificador = estado->placares[idx].identificador;
-                
-                enviarMensagem(hPipe, &msgId, sizeof(msgId));
+        case MSG_TIPO_LIGAR: {
+            EnterCriticalSection(&estado->cs);
+            estado->placares[idx].identificador = estado->proximoId++;
+            LeaveCriticalSection(&estado->cs);
 
-                _tprintf(_T("Placar %lu registado.\n"), msgId.identificador);
-                break;
+            MSG_ID msgId;
+            msgId.tipo = MSG_TIPO_ID;
+            msgId.identificador = estado->placares[idx].identificador;
 
-            case MSG_TIPO_DESLIGAR:
-                
+            enviarMensagem(hPipe, &msgId, sizeof(msgId));
+
+            _tprintf(_T("Placar %lu registado.\n"), msgId.identificador);
+            break;
+        }
+            case MSG_TIPO_DESLIGAR: {
                 MSG_CMD_PC cmdDesligar;
 
                 cmdDesligar.tipo = MSG_TIPO_DESLIGAR;
                 enviarMensagem(hPipe, &cmdDesligar, sizeof(cmdDesligar));
-                
+
                 removerPlacar(estado, idx);
                 return 0; // Sair do loop
-
-            case MSG_TIPO_FIM_ALERTA:
+            }
+            case MSG_TIPO_FIM_ALERTA: {
                 EnterCriticalSection(&estado->cs);
                 estado->placares[idx].temAlerta = FALSE;
                 LeaveCriticalSection(&estado->cs);
                 break;
-
-            default:
+            }
+            default: {
                 // Tipo desconhecido - ignorar ou logar
                 break;
+            }
         }
+
+        EnterCriticalSection(&estado->cs);
+        BOOL ativo = estado->placares[idx].ativo;
+        LeaveCriticalSection(&estado->cs);
+
 	}
 
     return 0;
@@ -301,6 +317,20 @@ DWORD WINAPI threadUtilizador_central(LPVOID param)
      * - Remover '\n' final
      * - Chamar processarComando_central()
      */
+
+    while(!estado->terminar) {
+        _tprintf(_T("> "));
+        if (_fgetts(linha, CENTRAL_MAX_CMD_LEN, stdin) == NULL) {
+            // Erro ou EOF - tratar como comando de encerrar
+            break;
+        }
+        // Remover '\n' final
+        size_t len = _tcslen(linha);
+        if (len > 0 && linha[len - 1] == _T('\n')) {
+            linha[len - 1] = _T('\0');
+        }
+        processarComando_central(linha, estado);
+	}
     return 0;
 }
 
@@ -333,6 +363,71 @@ void processarComando_central(const TCHAR *linha, EstadoCentral *estado)
      * - Caso contrario:
      *     -> Mostrar "Comando invalido"
      */
+
+    TCHAR comando[CENTRAL_MAX_CMD_LEN];
+    DWORD duracao, idPlacar;
+
+    /* Extrair comando (primeira palavra) */
+    int numScanned = _stscanf_s(linha, _T("%s"), comando, CENTRAL_MAX_CMD_LEN);
+
+    if (numScanned < 1) {
+        _tprintf(_T("Comando invalido\n"));
+        return;
+    }
+
+    /* Processar comandos */
+    if (_tcscmp(comando, CENTRAL_CMD_ALERTA) == 0) {
+        TCHAR* posicao = linha + _tcslen(CENTRAL_CMD_ALERTA);
+        while (*posicao == _T(' ')) posicao++;
+
+        TCHAR tempoCopy[CENTRAL_MAX_CMD_LEN];
+        _tcscpy_s(tempoCopy, CENTRAL_MAX_CMD_LEN, posicao);
+
+        /* Array grande o suficiente para o pior caso */
+        TCHAR* tokens[CENTRAL_MAX_CMD_LEN / 2];
+        int numTokens = 0;
+        TCHAR* contexto = NULL;
+        TCHAR* token = _tcstok_s(tempoCopy, _T(" "), &contexto);
+
+        while (token != NULL && numTokens < CENTRAL_MAX_CMD_LEN / 2) {
+            tokens[numTokens++] = token;
+            token = _tcstok_s(NULL, _T(" "), &contexto);
+        }
+
+        if (numTokens >= 3) {
+            idPlacar = (DWORD)_tcstoul(tokens[numTokens - 1], NULL, 10);
+            duracao = (DWORD)_tcstoul(tokens[numTokens - 2], NULL, 10);
+
+            TCHAR msg[MAX_MSG_LEN] = _T("");
+            for (int i = 0; i < numTokens - 2; i++) {
+                if (i > 0) _tcsncat_s(msg, MAX_MSG_LEN, _T(" "), _TRUNCATE);
+                _tcsncat_s(msg, MAX_MSG_LEN, tokens[i], _TRUNCATE);
+            }
+            executarAlerta(msg, duracao, idPlacar, estado);
+        }
+        else {
+            _tprintf(_T("Formato: alerta <msg> <duracao> <id_placar>\n"));
+        }
+    }
+    else if (_tcscmp(comando, CENTRAL_CMD_CANCELAR) == 0) {
+        /* Formato: cancelar <id_placar> */
+        int numScanned2 = _stscanf_s(linha, _T("%s %lu"), comando, CENTRAL_MAX_CMD_LEN, &idPlacar);
+
+        if (numScanned2 < 2) {
+            _tprintf(_T("Formato: cancelar <id_placar>\n"));
+        } else {
+            executarCancelar(idPlacar, estado);
+        }
+    }
+    else if (_tcscmp(comando, CENTRAL_CMD_LISTAR) == 0) {
+        executarListar(estado);
+    }
+    else if (_tcscmp(comando, CENTRAL_CMD_ENCERRAR) == 0) {
+        executarEncerrar(estado);
+    }
+    else {
+        _tprintf(_T("Comando invalido\n"));
+    }
 }
 
 void executarAlerta(const TCHAR *msg, DWORD duracao, DWORD idPlacar, EstadoCentral *estado)
@@ -351,6 +446,41 @@ void executarAlerta(const TCHAR *msg, DWORD duracao, DWORD idPlacar, EstadoCentr
      *   - Atualizar placares[i].temAlerta = TRUE e placares[i].alertaAtivo
      *   - LeaveCriticalSection
      */
+
+	MSG_ALERTA alerta;
+	alerta.tipo = MSG_TIPO_ALERTA;
+	_tcscpy_s(alerta.msg, MAX_MSG_LEN, msg);
+	alerta.duracao = duracao;
+
+    if(idPlacar == 0) {
+        // Enviar a todos os placares ativos
+        EnterCriticalSection(&estado->cs);
+        for (int i = 0; i < MAX_PLACARES; i++) {
+            if (estado->placares[i].ativo) {
+                enviarMensagem(estado->placares[i].hPipe, &alerta, sizeof(alerta));
+                DWORD bytesLidos;
+                receberMensagem(estado->placares[i].hPipe, &alerta, sizeof(alerta), &bytesLidos);
+                estado->placares[i].temAlerta = TRUE;
+                estado->placares[i].alertaAtivo = alerta;
+            }
+        }
+        LeaveCriticalSection(&estado->cs);
+    }
+    else {
+        // Enviar apenas ao placar com idPlacar
+        int idx = encontrarPlacaPorId(estado, idPlacar);
+        if (idx != -1) {
+            enviarMensagem(estado->placares[idx].hPipe, &alerta, sizeof(alerta));
+            DWORD bytesLidos;
+            receberMensagem(estado->placares[idx].hPipe, &alerta, sizeof(alerta), &bytesLidos);
+            EnterCriticalSection(&estado->cs);
+            estado->placares[idx].temAlerta = TRUE;
+            estado->placares[idx].alertaAtivo = alerta;
+            LeaveCriticalSection(&estado->cs);
+        } else {
+            _tprintf(_T("Placar com ID %lu nao encontrado.\n"), idPlacar);
+        }
+	}
 }
 
 void executarCancelar(DWORD idPlacar, EstadoCentral *estado)
@@ -366,6 +496,24 @@ void executarCancelar(DWORD idPlacar, EstadoCentral *estado)
      * - Limpar placares[i].temAlerta = FALSE
      * - LeaveCriticalSection
      */
+
+	int idx = encontrarPlacaPorId(estado, idPlacar);
+    if (idx == -1) {
+        _tprintf(_T("Placar com ID %lu nao encontrado.\n"), idPlacar);
+        return;
+    }
+    if (!estado->placares[idx].temAlerta) {
+        _tprintf(_T("Placar com ID %lu nao tem alerta ativo.\n"), idPlacar);
+        return;
+    }
+    MSG_CMD_CP cmdCancelar;
+    cmdCancelar.tipo = MSG_TIPO_CANCELAR;
+    enviarMensagem(estado->placares[idx].hPipe, &cmdCancelar, sizeof(cmdCancelar));
+    DWORD bytesLidos;
+    receberMensagem(estado->placares[idx].hPipe, &cmdCancelar, sizeof(cmdCancelar), &bytesLidos);
+    EnterCriticalSection(&estado->cs);
+    estado->placares[idx].temAlerta = FALSE;
+	LeaveCriticalSection(&estado->cs);
 }
 
 void executarListar(EstadoCentral *estado)
@@ -378,6 +526,18 @@ void executarListar(EstadoCentral *estado)
      *     "ID: %lu | Alerta: '%s'" (ou "sem alerta" se temAlerta=FALSE)
      * - LeaveCriticalSection
      */
+
+	EnterCriticalSection(&estado->cs);
+    for (int i = 0; i < MAX_PLACARES; i++) {
+        if (estado->placares[i].ativo) {
+            if (estado->placares[i].temAlerta) {
+                _tprintf(_T("ID: %lu | Alerta: '%s'\n"), estado->placares[i].identificador, estado->placares[i].alertaAtivo.msg);
+            } else {
+                _tprintf(_T("ID: %lu | Sem alerta\n"), estado->placares[i].identificador);
+            }
+        }
+    }
+	LeaveCriticalSection(&estado->cs);
 }
 
 void executarEncerrar(EstadoCentral *estado)
@@ -390,6 +550,17 @@ void executarEncerrar(EstadoCentral *estado)
      * - estado->terminar = TRUE
      * - LeaveCriticalSection
      */
+
+	EnterCriticalSection(&estado->cs);
+    for (int i = 0; i < MAX_PLACARES; i++) {
+        if (estado->placares[i].ativo) {
+            MSG_CMD_CP cmdEncerrar;
+            cmdEncerrar.tipo = MSG_TIPO_ENCERRAR;
+            enviarMensagem(estado->placares[i].hPipe, &cmdEncerrar, sizeof(cmdEncerrar));
+        }
+    }
+	estado->terminar = TRUE;
+	LeaveCriticalSection(&estado->cs);
 }
 
 /* -----------------------------------------------------------------------
@@ -404,6 +575,11 @@ BOOL enviarMensagem(HANDLE hPipe, const void *dados, DWORD tamanho)
      * - Verificar se bytesEscritos == tamanho
      * - Retornar TRUE em caso de sucesso, FALSE caso contrario
      */
+
+	int bytesEscritos;
+    if (WriteFile(hPipe, dados, tamanho, &bytesEscritos, NULL) && bytesEscritos == tamanho) {
+        return TRUE;
+	}
     return FALSE;
 }
 
@@ -416,6 +592,10 @@ BOOL receberMensagem(HANDLE hPipe, void *buffer, DWORD tamanhoMax, DWORD *bytesL
      * - Retornar TRUE em caso de sucesso, FALSE caso contrario (incluindo
      *   ERROR_BROKEN_PIPE que indica que o placar fechou a ligacao)
      */
+
+    if (ReadFile(hPipe, buffer, tamanhoMax, bytesLidos, NULL)) {
+		return TRUE;
+	}
     return FALSE;
 }
 
@@ -432,10 +612,16 @@ int encontrarPlacaPorId(EstadoCentral *estado, DWORD id)
      * - Retornar -1 se nao encontrado
      * Nota: chamar com a critical section ja adquirida, ou adquirir aqui.
      */
+
+    for(int i = 0; i < MAX_PLACARES; i++) {
+        if (estado->placares[i].ativo && estado->placares[i].identificador == id) {
+            return i;
+        }
+	}
     return -1;
 }
 
-int encontrarSlotLivre(EstadoCentral *estado)
+int encontrarSlotLivre(EstadoCentral* estado)
 {
     /*
      * TODO:
@@ -444,6 +630,12 @@ int encontrarSlotLivre(EstadoCentral *estado)
      * - Retornar -1 se o array estiver cheio
      * Nota: assumir que a critical section ja esta adquirida.
      */
+
+    for (int i = 0; i < MAX_PLACARES; i++) {
+        if (!estado->placares[i].ativo) {
+            return i;
+        }
+    }
     return -1;
 }
 
@@ -459,6 +651,16 @@ void removerPlacar(EstadoCentral *estado, int indice)
      * - estado->numPlacares--
      * - LeaveCriticalSection
      */
+
+	EnterCriticalSection(&estado->cs);
+	DisconnectNamedPipe(estado->placares[indice].hPipe);
+	CloseHandle(estado->placares[indice].hPipe);
+	estado->placares[indice].ativo = FALSE;
+	estado->placares[indice].identificador = 0;
+	estado->placares[indice].temAlerta = FALSE;
+	memset(&estado->placares[indice].alertaAtivo, 0, sizeof(MSG_ALERTA));
+	estado->numPlacares--;
+	LeaveCriticalSection(&estado->cs);
 }
 
 /* -----------------------------------------------------------------------
@@ -472,4 +674,10 @@ void obterDataHoraAtual_central(TCHAR *buffer, DWORD tamanho)
      * - GetLocalTime() -> SYSTEMTIME
      * - _sntprintf_s() para formatar "DD/MM/AAAA (HH:MM:SS)"
      */
+
+	SYSTEMTIME st;
+    GetLocalTime(&st);
+    _sntprintf_s(buffer, tamanho, _TRUNCATE, _T("%02d/%02d/%04d (%02d:%02d:%02d)"),
+		st.wDay, st.wMonth, st.wYear, st.wHour, st.wMinute, st.wSecond);
+
 }
