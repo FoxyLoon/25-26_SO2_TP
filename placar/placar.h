@@ -66,7 +66,7 @@ BOOL  enviarMensagem_placar(HANDLE hPipe, const void *dados, DWORD tamanho);
 BOOL  receberMensagem_placar(HANDLE hPipe, void *buffer, DWORD tamanhoMax, DWORD *bytesLidos);
 
 /* Gestao de alertas */
-void  receberAlerta(EstadoPlacar *estado);
+void  receberAlerta(EstadoPlacar* estado, BYTE* buffer, DWORD bytes);
 void  apresentarAlerta(const MSG_ALERTA *alerta);
 void  apresentarFimAlerta(void);
 void  cancelarAlertaAtivo(EstadoPlacar *estado);
