@@ -12,7 +12,7 @@ static EstadoCentral g_estado;
  * main
  * ----------------------------------------------------------------------- */
 
-int _tmain(int argc, TCHAR *argv[])
+int _tmain(int argc, TCHAR* argv[])
 {
     HANDLE hThreads[2];
 
@@ -28,7 +28,7 @@ int _tmain(int argc, TCHAR *argv[])
      *   [0] threadListener      - aceita ligacoes de novos placares
      *   [1] threadUtilizador_central - le comandos do administrador
      */
-    hThreads[0] = CreateThread(NULL, 0, threadListener,           &g_estado, 0, NULL);
+    hThreads[0] = CreateThread(NULL, 0, threadListener, &g_estado, 0, NULL);
     hThreads[1] = CreateThread(NULL, 0, threadUtilizador_central, &g_estado, 0, NULL);
 
     if (hThreads[0] == NULL || hThreads[1] == NULL) {
@@ -50,7 +50,7 @@ int _tmain(int argc, TCHAR *argv[])
  * Inicializacao e limpeza
  * ----------------------------------------------------------------------- */
 
-BOOL inicializar_central(EstadoCentral *estado, int argc, TCHAR *argv[])
+BOOL inicializar_central(EstadoCentral* estado, int argc, TCHAR* argv[])
 {
     /*
      * TODO:
@@ -75,14 +75,14 @@ BOOL inicializar_central(EstadoCentral *estado, int argc, TCHAR *argv[])
     InitializeCriticalSection(&estado->cs); // inicializar a CRITICAL_SECTION
 
     estado->numPlacares = 0;
-    estado->proximoId   = 1;
-    estado->terminar    = FALSE;
+    estado->proximoId = 1;
+    estado->terminar = FALSE;
     memset(estado->placares, 0, sizeof(estado->placares));
 
     return TRUE;
 }
 
-BOOL libertar_central(EstadoCentral *estado)
+BOOL libertar_central(EstadoCentral* estado)
 {
     /*
      * TODO:
@@ -107,7 +107,7 @@ BOOL libertar_central(EstadoCentral *estado)
 
 DWORD WINAPI threadListener(LPVOID param)
 {
-    EstadoCentral *estado = (EstadoCentral *)param;
+    EstadoCentral* estado = (EstadoCentral*)param;
 
     /*
      * Loop principal (enquanto !estado->terminar):
@@ -154,7 +154,9 @@ DWORD WINAPI threadListener(LPVOID param)
             continue;
         }
 
-        if (!ConnectNamedPipe(hPipe, NULL)) {
+        // CORREÇÃO: ConnectNamedPipe pode retornar FALSE mesmo com sucesso se o cliente já se ligou antes da chamada.
+        // O código original tratava o retorno FALSE como falha, descartando ligações válidas.
+        if (!ConnectNamedPipe(hPipe, NULL) && GetLastError() != ERROR_PIPE_CONNECTED) {
             CloseHandle(hPipe);
             continue;
         }
@@ -173,8 +175,8 @@ DWORD WINAPI threadListener(LPVOID param)
         estado->placares[slot].ativo = TRUE;
         estado->numPlacares++;
 
-        ArgThreadPlacar *arg = (ArgThreadPlacar *)malloc(sizeof(ArgThreadPlacar));
-        arg->estado       = estado;
+        ArgThreadPlacar* arg = (ArgThreadPlacar*)malloc(sizeof(ArgThreadPlacar));
+        arg->estado = estado;
         arg->indicePlacar = slot;
 
         HANDLE hThread = CreateThread(NULL, 0, threadPlacar, arg, 0, NULL);
@@ -200,9 +202,9 @@ DWORD WINAPI threadListener(LPVOID param)
 
 DWORD WINAPI threadPlacar(LPVOID param)
 {
-    ArgThreadPlacar *arg    = (ArgThreadPlacar *)param;
-    EstadoCentral   *estado = arg->estado;
-    int              idx    = arg->indicePlacar;
+    ArgThreadPlacar* arg = (ArgThreadPlacar*)param;
+    EstadoCentral* estado = arg->estado;
+    int              idx = arg->indicePlacar;
     free(arg); /* libertar o argumento alocado em threadListener */
 
     HANDLE hPipe;
@@ -262,12 +264,12 @@ DWORD WINAPI threadPlacar(LPVOID param)
             LeaveCriticalSection(&estado->cs);
 
             MSG_ID msgId;
-            msgId.tipo          = MSG_TIPO_ID;
+            msgId.tipo = MSG_TIPO_ID;
             msgId.identificador = estado->placares[idx].identificador;
 
-            enviarMensagem(hPipe, &msgId, sizeof(msgId));
-
-            _tprintf(_T("Placar %lu registado.\n"), msgId.identificador);
+            if (enviarMensagem(hPipe, &msgId, sizeof(msgId))) {
+                _tprintf(_T("Placar %lu registado.\n"), msgId.identificador);
+            }
             break;
         }
         case MSG_TIPO_DESLIGAR: {
@@ -308,7 +310,7 @@ DWORD WINAPI threadPlacar(LPVOID param)
 
 DWORD WINAPI threadUtilizador_central(LPVOID param)
 {
-    EstadoCentral *estado = (EstadoCentral *)param;
+    EstadoCentral* estado = (EstadoCentral*)param;
     TCHAR linha[CENTRAL_MAX_CMD_LEN];
 
     /*
@@ -339,7 +341,7 @@ DWORD WINAPI threadUtilizador_central(LPVOID param)
  * Processamento de comandos do administrador
  * ----------------------------------------------------------------------- */
 
-void processarComando_central(const TCHAR *linha, EstadoCentral *estado)
+void processarComando_central(const TCHAR* linha, EstadoCentral* estado)
 {
     /*
      * TODO:
@@ -378,17 +380,17 @@ void processarComando_central(const TCHAR *linha, EstadoCentral *estado)
 
     /* Processar comandos */
     if (_tcscmp(comando, CENTRAL_CMD_ALERTA) == 0) {
-        TCHAR *posicao = linha + _tcslen(CENTRAL_CMD_ALERTA);
+        TCHAR* posicao = linha + _tcslen(CENTRAL_CMD_ALERTA);
         while (*posicao == _T(' ')) posicao++;
 
         TCHAR tempoCopy[CENTRAL_MAX_CMD_LEN];
         _tcscpy_s(tempoCopy, CENTRAL_MAX_CMD_LEN, posicao);
 
         /* Array grande o suficiente para o pior caso */
-        TCHAR *tokens[CENTRAL_MAX_CMD_LEN / 2];
+        TCHAR* tokens[CENTRAL_MAX_CMD_LEN / 2];
         int    numTokens = 0;
-        TCHAR *contexto  = NULL;
-        TCHAR *token     = _tcstok_s(tempoCopy, _T(" "), &contexto);
+        TCHAR* contexto = NULL;
+        TCHAR* token = _tcstok_s(tempoCopy, _T(" "), &contexto);
 
         while (token != NULL && numTokens < CENTRAL_MAX_CMD_LEN / 2) {
             tokens[numTokens++] = token;
@@ -397,7 +399,7 @@ void processarComando_central(const TCHAR *linha, EstadoCentral *estado)
 
         if (numTokens >= 3) {
             idPlacar = (DWORD)_tcstoul(tokens[numTokens - 1], NULL, 10);
-            duracao  = (DWORD)_tcstoul(tokens[numTokens - 2], NULL, 10);
+            duracao = (DWORD)_tcstoul(tokens[numTokens - 2], NULL, 10);
 
             TCHAR msg[MAX_MSG_LEN] = _T("");
             for (int i = 0; i < numTokens - 2; i++) {
@@ -416,7 +418,8 @@ void processarComando_central(const TCHAR *linha, EstadoCentral *estado)
 
         if (numScanned2 < 2) {
             _tprintf(_T("Formato: cancelar <id_placar>\n"));
-        } else {
+        }
+        else {
             executarCancelar(idPlacar, estado);
         }
     }
@@ -431,7 +434,7 @@ void processarComando_central(const TCHAR *linha, EstadoCentral *estado)
     }
 }
 
-void executarAlerta(const TCHAR *msg, DWORD duracao, DWORD idPlacar, EstadoCentral *estado)
+void executarAlerta(const TCHAR* msg, DWORD duracao, DWORD idPlacar, EstadoCentral* estado)
 {
     /*
      * TODO:
@@ -465,22 +468,30 @@ void executarAlerta(const TCHAR *msg, DWORD duracao, DWORD idPlacar, EstadoCentr
          * a CS apenas para actualizar o estado. */
         for (int i = 0; i < MAX_PLACARES; i++) {
             EnterCriticalSection(&estado->cs);
-            BOOL   ativo  = estado->placares[i].ativo;
-            HANDLE hPipe  = estado->placares[i].hPipe;
+            BOOL   ativo = estado->placares[i].ativo;
+            HANDLE hPipe = estado->placares[i].hPipe;
             LeaveCriticalSection(&estado->cs); /* largar ANTES do I/O */
 
             if (!ativo) continue;
 
-            enviarMensagem(hPipe, &alerta, sizeof(alerta));
+            //  CORREÇÃO: Verificar se o envio e a receção de confirmação foram bem-sucedidos.
+            // O código original ignorava o retorno, podendo deixar o estado inconsistente se o pipe quebrasse.
+            if (!enviarMensagem(hPipe, &alerta, sizeof(alerta))) {
+                _tprintf(_T("Falha ao enviar alerta para placar %d. Pipe possivelmente fechado.\n"), i);
+                continue;
+            }
 
             MSG_ALERTA eco;
             DWORD bytesLidos;
-            receberMensagem(hPipe, &eco, sizeof(eco), &bytesLidos);
-
-            EnterCriticalSection(&estado->cs); /* re-adquirir para escrever estado */
-            estado->placares[i].temAlerta   = TRUE;
-            estado->placares[i].alertaAtivo = alerta;
-            LeaveCriticalSection(&estado->cs);
+            if (receberMensagem(hPipe, &eco, sizeof(eco), &bytesLidos) && bytesLidos == sizeof(eco)) {
+                EnterCriticalSection(&estado->cs); /* re-adquirir para escrever estado */
+                estado->placares[i].temAlerta = TRUE;
+                estado->placares[i].alertaAtivo = alerta;
+                LeaveCriticalSection(&estado->cs);
+            }
+            else {
+                _tprintf(_T("Falha ao receber confirmação de alerta para placar %d.\n"), i);
+            }
         }
     }
     else {
@@ -491,28 +502,32 @@ void executarAlerta(const TCHAR *msg, DWORD duracao, DWORD idPlacar, EstadoCentr
          * CS e a CS e largada antes do I/O bloqueante, pelo mesmo motivo
          * descrito acima. */
         EnterCriticalSection(&estado->cs);
-        int    idx   = encontrarPlacaPorId(estado, idPlacar);
+        int    idx = encontrarPlacaPorId(estado, idPlacar);
         HANDLE hPipe = (idx != -1) ? estado->placares[idx].hPipe : INVALID_HANDLE_VALUE;
         LeaveCriticalSection(&estado->cs); /* largar ANTES do I/O */
 
         if (idx != -1) {
-            enviarMensagem(hPipe, &alerta, sizeof(alerta));
-
-            MSG_ALERTA eco;
-            DWORD bytesLidos;
-            receberMensagem(hPipe, &eco, sizeof(eco), &bytesLidos);
-
-            EnterCriticalSection(&estado->cs);
-            estado->placares[idx].temAlerta   = TRUE;
-            estado->placares[idx].alertaAtivo = alerta;
-            LeaveCriticalSection(&estado->cs);
-        } else {
+            if (!enviarMensagem(hPipe, &alerta, sizeof(alerta))) {
+                _tprintf(_T("Falha ao enviar alerta para placar ID %lu.\n"), idPlacar);
+            }
+            else {
+                MSG_ALERTA eco;
+                DWORD bytesLidos;
+                if (receberMensagem(hPipe, &eco, sizeof(eco), &bytesLidos) && bytesLidos == sizeof(eco)) {
+                    EnterCriticalSection(&estado->cs);
+                    estado->placares[idx].temAlerta = TRUE;
+                    estado->placares[idx].alertaAtivo = alerta;
+                    LeaveCriticalSection(&estado->cs);
+                }
+            }
+        }
+        else {
             _tprintf(_T("Placar com ID %lu nao encontrado.\n"), idPlacar);
         }
     }
 }
 
-void executarCancelar(DWORD idPlacar, EstadoCentral *estado)
+void executarCancelar(DWORD idPlacar, EstadoCentral* estado)
 {
     /*
      * TODO:
@@ -526,8 +541,8 @@ void executarCancelar(DWORD idPlacar, EstadoCentral *estado)
      * - LeaveCriticalSection
      */
 
-    /* CORRECAO: encontrarPlacaPorId() chamado com CS adquirida; handle lido
-     * com CS; CS largada antes do I/O bloqueante (mesmo motivo de executarAlerta). */
+     /* CORRECAO: encontrarPlacaPorId() chamado com CS adquirida; handle lido
+      * com CS; CS largada antes do I/O bloqueante (mesmo motivo de executarAlerta). */
     EnterCriticalSection(&estado->cs);
     int idx = encontrarPlacaPorId(estado, idPlacar);
     if (idx == -1) {
@@ -545,17 +560,21 @@ void executarCancelar(DWORD idPlacar, EstadoCentral *estado)
 
     MSG_CMD_CP cmdCancelar;
     cmdCancelar.tipo = MSG_TIPO_CANCELAR;
-    enviarMensagem(hPipe, &cmdCancelar, sizeof(cmdCancelar));
+
+    if (!enviarMensagem(hPipe, &cmdCancelar, sizeof(cmdCancelar))) {
+        _tprintf(_T("Falha ao enviar cancelamento para placar ID %lu.\n"), idPlacar);
+        return;
+    }
 
     DWORD bytesLidos;
-    receberMensagem(hPipe, &cmdCancelar, sizeof(cmdCancelar), &bytesLidos);
-
-    EnterCriticalSection(&estado->cs);
-    estado->placares[idx].temAlerta = FALSE;
-    LeaveCriticalSection(&estado->cs);
+    if (receberMensagem(hPipe, &cmdCancelar, sizeof(cmdCancelar), &bytesLidos) && bytesLidos == sizeof(cmdCancelar)) {
+        EnterCriticalSection(&estado->cs);
+        estado->placares[idx].temAlerta = FALSE;
+        LeaveCriticalSection(&estado->cs);
+    }
 }
 
-void executarListar(EstadoCentral *estado)
+void executarListar(EstadoCentral* estado)
 {
     /*
      * TODO:
@@ -571,18 +590,19 @@ void executarListar(EstadoCentral *estado)
         if (estado->placares[i].ativo) {
             if (estado->placares[i].temAlerta) {
                 _tprintf(_T("ID: %lu | Alerta: '%s'\n"),
-                         estado->placares[i].identificador,
-                         estado->placares[i].alertaAtivo.msg);
-            } else {
+                    estado->placares[i].identificador,
+                    estado->placares[i].alertaAtivo.msg);
+            }
+            else {
                 _tprintf(_T("ID: %lu | Sem alerta\n"),
-                         estado->placares[i].identificador);
+                    estado->placares[i].identificador);
             }
         }
     }
     LeaveCriticalSection(&estado->cs);
 }
 
-void executarEncerrar(EstadoCentral *estado)
+void executarEncerrar(EstadoCentral* estado)
 {
     /*
      * TODO:
@@ -609,7 +629,7 @@ void executarEncerrar(EstadoCentral *estado)
  * Comunicacao com os placares
  * ----------------------------------------------------------------------- */
 
-BOOL enviarMensagem(HANDLE hPipe, const void *dados, DWORD tamanho)
+BOOL enviarMensagem(HANDLE hPipe, const void* dados, DWORD tamanho)
 {
     /*
      * TODO:
@@ -618,15 +638,42 @@ BOOL enviarMensagem(HANDLE hPipe, const void *dados, DWORD tamanho)
      * - Retornar TRUE em caso de sucesso, FALSE caso contrario
      */
 
-    /* CORRECAO: declarado como DWORD (era 'int'), pois WriteFile exige LPDWORD. */
-    DWORD bytesEscritos;
-    if (WriteFile(hPipe, dados, tamanho, &bytesEscritos, NULL) && bytesEscritos == tamanho) {
-        return TRUE;
+     /* CORRECAO: usar OVERLAPPED I/O com timeout para evitar bloqueio indefinido
+      * se o placar nao responder. Timeout de 30 segundos. */
+
+    HANDLE hEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
+    if (hEvent == NULL) return FALSE;
+
+    OVERLAPPED ov = { 0 };
+    ov.hEvent = hEvent;
+    DWORD bytesWritten = 0;
+
+    BOOL ok = WriteFile(hPipe, dados, tamanho, NULL, &ov);
+    if (!ok && GetLastError() != ERROR_IO_PENDING) {
+        CloseHandle(hEvent);
+        return FALSE;
     }
-    return FALSE;
+
+    /* Aguardar com timeout de 30 segundos */
+    DWORD waitResult = WaitForSingleObject(hEvent, 30000); /* 30 segundos */
+
+    if (waitResult == WAIT_OBJECT_0) {
+        /* Evento disparou - escrita concluida */
+        ok = GetOverlappedResult(hPipe, &ov, &bytesWritten, FALSE);
+        CloseHandle(hEvent);
+        return ok && (bytesWritten == tamanho);
+    }
+    else {
+        /* Timeout ou erro */
+        //  CORREÇÃO: CancelIo() foi descontinuado e é inseguro após WAIT_TIMEOUT.
+        // A I/O pode ter acabado de completar, e cancelar agora causaria estado inconsistente.
+        // O pipe será fechado pela thread oposta quando detetar a quebra da conexão.
+        CloseHandle(hEvent);
+        return FALSE;
+    }
 }
 
-BOOL receberMensagem(HANDLE hPipe, void *buffer, DWORD tamanhoMax, DWORD *bytesLidos)
+BOOL receberMensagem(HANDLE hPipe, void* buffer, DWORD tamanhoMax, DWORD* bytesLidos)
 {
     /*
      * TODO:
@@ -636,17 +683,44 @@ BOOL receberMensagem(HANDLE hPipe, void *buffer, DWORD tamanhoMax, DWORD *bytesL
      *   ERROR_BROKEN_PIPE que indica que o placar fechou a ligacao)
      */
 
-    if (ReadFile(hPipe, buffer, tamanhoMax, bytesLidos, NULL)) {
-        return TRUE;
+     /* CORRECAO: usar OVERLAPPED I/O com timeout para evitar bloqueio indefinido
+      * se o placar nao responder. Timeout de 30 segundos. */
+
+    HANDLE hEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
+    if (hEvent == NULL) return FALSE;
+
+    OVERLAPPED ov = { 0 };
+    ov.hEvent = hEvent;
+    *bytesLidos = 0;
+
+    BOOL ok = ReadFile(hPipe, buffer, tamanhoMax, NULL, &ov);
+    if (!ok && GetLastError() != ERROR_IO_PENDING) {
+        CloseHandle(hEvent);
+        return FALSE;
     }
-    return FALSE;
+
+    /* Aguardar com timeout de 30 segundos */
+    DWORD waitResult = WaitForSingleObject(hEvent, 30000); /* 30 segundos */
+
+    if (waitResult == WAIT_OBJECT_0) {
+        /* Evento disparou - leitura concluida */
+        ok = GetOverlappedResult(hPipe, &ov, bytesLidos, FALSE);
+        CloseHandle(hEvent);
+        return ok;
+    }
+    else {
+        /* Timeout ou erro */
+        //  CORREÇÃO: Idem ao enviarMensagem. Removido CancelIo() para evitar condições de corrida.
+        CloseHandle(hEvent);
+        return FALSE;
+    }
 }
 
 /* -----------------------------------------------------------------------
  * Gestao de placares
  * ----------------------------------------------------------------------- */
 
-int encontrarPlacaPorId(EstadoCentral *estado, DWORD id)
+int encontrarPlacaPorId(EstadoCentral* estado, DWORD id)
 {
     /*
      * TODO:
@@ -664,7 +738,7 @@ int encontrarPlacaPorId(EstadoCentral *estado, DWORD id)
     return -1;
 }
 
-int encontrarSlotLivre(EstadoCentral *estado)
+int encontrarSlotLivre(EstadoCentral* estado)
 {
     /*
      * TODO:
@@ -682,7 +756,7 @@ int encontrarSlotLivre(EstadoCentral *estado)
     return -1;
 }
 
-void removerPlacar(EstadoCentral *estado, int indice)
+void removerPlacar(EstadoCentral* estado, int indice)
 {
     /*
      * TODO:
@@ -696,11 +770,14 @@ void removerPlacar(EstadoCentral *estado, int indice)
      */
 
     EnterCriticalSection(&estado->cs);
-    DisconnectNamedPipe(estado->placares[indice].hPipe);
-    CloseHandle(estado->placares[indice].hPipe);
-    estado->placares[indice].ativo        = FALSE;
+    if (estado->placares[indice].hPipe != INVALID_HANDLE_VALUE) {
+        DisconnectNamedPipe(estado->placares[indice].hPipe);
+        CloseHandle(estado->placares[indice].hPipe);
+        estado->placares[indice].hPipe = INVALID_HANDLE_VALUE;
+    }
+    estado->placares[indice].ativo = FALSE;
     estado->placares[indice].identificador = 0;
-    estado->placares[indice].temAlerta    = FALSE;
+    estado->placares[indice].temAlerta = FALSE;
     memset(&estado->placares[indice].alertaAtivo, 0, sizeof(MSG_ALERTA));
     estado->numPlacares--;
     LeaveCriticalSection(&estado->cs);
@@ -710,7 +787,7 @@ void removerPlacar(EstadoCentral *estado, int indice)
  * Utilitarios
  * ----------------------------------------------------------------------- */
 
-void obterDataHoraAtual_central(TCHAR *buffer, DWORD tamanho)
+void obterDataHoraAtual_central(TCHAR* buffer, DWORD tamanho)
 {
     /*
      * TODO: identico a obterDataHoraAtual() do placar.

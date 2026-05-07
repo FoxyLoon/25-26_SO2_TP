@@ -13,7 +13,7 @@ static EstadoPlacar g_estado;
  * main
  * ----------------------------------------------------------------------- */
 
-int _tmain(int argc, TCHAR *argv[])
+int _tmain(int argc, TCHAR* argv[])
 {
     HANDLE hThreads[2];
 
@@ -25,7 +25,7 @@ int _tmain(int argc, TCHAR *argv[])
     _tprintf(_T("NamedPipe = '%s'\n"), g_estado.nomePipe);
 
     hThreads[0] = CreateThread(NULL, 0, threadUtilizador, &g_estado, 0, NULL);
-    hThreads[1] = CreateThread(NULL, 0, threadAlertas,    &g_estado, 0, NULL);
+    hThreads[1] = CreateThread(NULL, 0, threadAlertas, &g_estado, 0, NULL);
 
     if (hThreads[0] == NULL || hThreads[1] == NULL) {
         _tprintf(_T("Erro ao criar threads.\n"));
@@ -46,16 +46,16 @@ int _tmain(int argc, TCHAR *argv[])
  * Inicializacao e limpeza
  * ----------------------------------------------------------------------- */
 
-BOOL inicializar(EstadoPlacar *estado, int argc, TCHAR *argv[])
+BOOL inicializar(EstadoPlacar* estado, int argc, TCHAR* argv[])
 {
     InitializeCriticalSection(&estado->cs);
 
     EnterCriticalSection(&estado->cs);
     estado->identificador = 0;
-    estado->ligado        = FALSE;
-    estado->terminar      = FALSE;
-    estado->temAlerta     = FALSE;
-    estado->hPipe         = INVALID_HANDLE_VALUE;
+    estado->ligado = FALSE;
+    estado->terminar = FALSE;
+    estado->temAlerta = FALSE;
+    estado->hPipe = INVALID_HANDLE_VALUE;
     LeaveCriticalSection(&estado->cs);
 
     /* Obter o nome do pipe (args ou registry) - identico a M1 */
@@ -89,7 +89,9 @@ BOOL inicializar(EstadoPlacar *estado, int argc, TCHAR *argv[])
      * escreve o comando "liga".
      */
 
-    estado->hPipeEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
+     //  CORREÇÃO: O evento para I/O sobreposto DEVE ser auto-reset (FALSE).
+     // Manual-reset (TRUE) causa comportamento indefinido com WaitForMultipleObjects e I/O assíncrono.
+    estado->hPipeEvent = CreateEvent(NULL, FALSE, FALSE, NULL);
     if (estado->hPipeEvent == NULL) {
         _tprintf(_T("Erro ao criar evento de overlapped: %lu\n"), GetLastError());
         return FALSE;
@@ -105,7 +107,7 @@ BOOL inicializar(EstadoPlacar *estado, int argc, TCHAR *argv[])
     return TRUE;
 }
 
-BOOL libertar(EstadoPlacar *estado)
+BOOL libertar(EstadoPlacar* estado)
 {
     /*
      * TODO (M2 - adicionar ao que ja existia):
@@ -113,31 +115,22 @@ BOOL libertar(EstadoPlacar *estado)
      * - Fechar estado->hPipeEvent com CloseHandle()
      */
 
-    /* CORRECAO: a versao anterior so fechava hPipeEvent e hWaitableTimer
-     * (e chamava DeleteCriticalSection) dentro do bloco 'if hPipe != INVALID'.
-     * Isso causava dois problemas:
-     *   1. Se o programa terminava sem nunca ligar (hPipe fica INVALID_HANDLE_VALUE),
-     *      hPipeEvent, hWaitableTimer e a CRITICAL_SECTION nunca eram libertados.
-     *   2. A funcao nao tinha 'return' no ramo else -> comportamento indefinido
-     *      (UB: funcao nao-void sem return).
-     * Corrigido: fechar sempre todos os recursos, independentemente do hPipe. */
+     /* CORRECAO: a versao anterior so fechava hPipeEvent e hWaitableTimer
+      * (e chamava DeleteCriticalSection) dentro do bloco 'if hPipe != INVALID'.
+      * Isso causava dois problemas:
+      *   1. Se o programa terminava sem nunca ligar (hPipe fica INVALID_HANDLE_VALUE),
+      *      hPipeEvent, hWaitableTimer e a CRITICAL_SECTION nunca eram libertados.
+      *   2. A funcao nao tinha 'return' no ramo else -> comportamento indefinido
+      *      (UB: funcao nao-void sem return).
+      * Corrigido: fechar sempre todos os recursos, independentemente do hPipe. */
 
     if (estado->hPipe != INVALID_HANDLE_VALUE) {
-        if (!CloseHandle(estado->hPipe)) {
-            _tprintf(_T("Erro ao fechar handle do pipe: %lu\n"), GetLastError());
-            return FALSE;
-        }
+        CloseHandle(estado->hPipe);
+        estado->hPipe = INVALID_HANDLE_VALUE;
     }
 
-    if (!CloseHandle(estado->hPipeEvent)) {
-        _tprintf(_T("Erro ao fechar evento de overlapped: %lu\n"), GetLastError());
-        return FALSE;
-    }
-
-    if (!CloseHandle(estado->hWaitableTimer)) {
-        _tprintf(_T("Erro ao fechar waitable timer: %lu\n"), GetLastError());
-        return FALSE;
-    }
+    if (estado->hPipeEvent != NULL) CloseHandle(estado->hPipeEvent);
+    if (estado->hWaitableTimer != NULL) CloseHandle(estado->hWaitableTimer);
 
     DeleteCriticalSection(&estado->cs);
     return TRUE;
@@ -147,7 +140,7 @@ BOOL libertar(EstadoPlacar *estado)
  * Registry (sem alteracoes face a M1)
  * ----------------------------------------------------------------------- */
 
-BOOL lerNomePipeDoRegistry(TCHAR *buffer, DWORD tamanho)
+BOOL lerNomePipeDoRegistry(TCHAR* buffer, DWORD tamanho)
 {
     HKEY hKey;
 
@@ -156,10 +149,10 @@ BOOL lerNomePipeDoRegistry(TCHAR *buffer, DWORD tamanho)
         return FALSE;
     }
 
-    DWORD tipo         = REG_SZ;
+    DWORD tipo = REG_SZ;
     DWORD tamanhoBytes = tamanho * sizeof(TCHAR);
     if (RegQueryValueEx(hKey, REGISTRY_NPIPE_VAL, NULL, &tipo,
-                        (LPBYTE)buffer, &tamanhoBytes) != ERROR_SUCCESS) {
+        (LPBYTE)buffer, &tamanhoBytes) != ERROR_SUCCESS) {
         _tprintf(_T("Erro ao ler valor do registry.\n"));
         RegCloseKey(hKey);
         return FALSE;
@@ -169,18 +162,18 @@ BOOL lerNomePipeDoRegistry(TCHAR *buffer, DWORD tamanho)
     return TRUE;
 }
 
-BOOL guardarNomePipeNoRegistry(const TCHAR *nomePipe)
+BOOL guardarNomePipeNoRegistry(const TCHAR* nomePipe)
 {
     HKEY hKey;
     if (RegCreateKeyEx(HKEY_CURRENT_USER, REGISTRY_KEY, 0, NULL, 0,
-                       KEY_WRITE, NULL, &hKey, NULL) != ERROR_SUCCESS) {
+        KEY_WRITE, NULL, &hKey, NULL) != ERROR_SUCCESS) {
         _tprintf(_T("Erro ao criar/abrir chave do registry.\n"));
         return FALSE;
     }
 
     if (RegSetValueEx(hKey, REGISTRY_NPIPE_VAL, 0, REG_SZ,
-                      (const BYTE *)nomePipe,
-                      (DWORD)((_tcslen(nomePipe) + 1) * sizeof(TCHAR))) != ERROR_SUCCESS) {
+        (const BYTE*)nomePipe,
+        (DWORD)((_tcslen(nomePipe) + 1) * sizeof(TCHAR))) != ERROR_SUCCESS) {
         _tprintf(_T("Erro ao escrever valor no registry.\n"));
         RegCloseKey(hKey);
         return FALSE;
@@ -196,7 +189,7 @@ BOOL guardarNomePipeNoRegistry(const TCHAR *nomePipe)
 
 DWORD WINAPI threadUtilizador(LPVOID param)
 {
-    EstadoPlacar *estado = (EstadoPlacar *)param;
+    EstadoPlacar* estado = (EstadoPlacar*)param;
     TCHAR cmd[PLACAR_MAX_CMD_LEN];
 
     while (1) {
@@ -220,7 +213,7 @@ DWORD WINAPI threadUtilizador(LPVOID param)
     return 0;
 }
 
-void processarComando(const TCHAR *cmd, EstadoPlacar *estado)
+void processarComando(const TCHAR* cmd, EstadoPlacar* estado)
 {
     if (_tcscmp(cmd, PLACAR_CMD_LIGAR) == 0)
         executarLigar(estado);
@@ -230,7 +223,7 @@ void processarComando(const TCHAR *cmd, EstadoPlacar *estado)
         _tprintf(_T("Comando invalido: '%s'\n"), cmd);
 }
 
-void executarLigar(EstadoPlacar *estado)
+void executarLigar(EstadoPlacar* estado)
 {
     EnterCriticalSection(&estado->cs);
     if (estado->ligado) {
@@ -270,7 +263,7 @@ void executarLigar(EstadoPlacar *estado)
      * - Mostrar: "Identificador = %lu\n"
      */
 
-    // Liga ao named pipe do central
+     // Liga ao named pipe do central
     HANDLE hPipe;
     while (1) {
         hPipe = CreateFile(
@@ -341,14 +334,14 @@ void executarLigar(EstadoPlacar *estado)
     // Atualiza o estado com o identificador recebido
     EnterCriticalSection(&estado->cs);
     estado->identificador = resposta.identificador;
-    estado->ligado        = TRUE;
+    estado->ligado = TRUE;
     LeaveCriticalSection(&estado->cs);
 
     // Mostra o identificador atribuido
     _tprintf(_T("Identificador = %lu\n"), estado->identificador);
 }
 
-void executarDesligar(EstadoPlacar *estado)
+void executarDesligar(EstadoPlacar* estado)
 {
     EnterCriticalSection(&estado->cs);
     if (!estado->ligado) {
@@ -375,7 +368,7 @@ void executarDesligar(EstadoPlacar *estado)
      * - LeaveCriticalSection
      */
 
-    // Cancela qualquer alerta ativo
+     // Cancela qualquer alerta ativo
     cancelarAlertaAtivo(estado);
 
     // Envia o pedido de desligar ao central
@@ -403,7 +396,7 @@ void executarDesligar(EstadoPlacar *estado)
 
     // Atualiza o estado para desligado e terminar
     EnterCriticalSection(&estado->cs);
-    estado->ligado   = FALSE;
+    estado->ligado = FALSE;
     estado->terminar = TRUE;
     LeaveCriticalSection(&estado->cs);
 
@@ -420,7 +413,7 @@ void executarDesligar(EstadoPlacar *estado)
 
 DWORD WINAPI threadAlertas(LPVOID param)
 {
-    EstadoPlacar *estado = (EstadoPlacar *)param;
+    EstadoPlacar* estado = (EstadoPlacar*)param;
 
     /*
      * Nesta thread fazemos duas coisas em paralelo:
@@ -474,7 +467,7 @@ DWORD WINAPI threadAlertas(LPVOID param)
         // 1. Verifica se deve terminar
         EnterCriticalSection(&estado->cs);
         BOOL   terminar = estado->terminar;
-        HANDLE hPipe    = estado->hPipe;
+        HANDLE hPipe = estado->hPipe;
         LeaveCriticalSection(&estado->cs);
 
         if (terminar) break;
@@ -518,7 +511,7 @@ DWORD WINAPI threadAlertas(LPVOID param)
 
         switch (wait) {
 
-        // PipeEvent
+            // PipeEvent
         case WAIT_OBJECT_0:
         {
             // 5. Leitura do pipe concluida
@@ -560,7 +553,7 @@ DWORD WINAPI threadAlertas(LPVOID param)
             // 7. Timeout - Apenas repete o loop para re-verificar estado->terminar
             break;
 
-        // Erro inesperado
+            // Erro inesperado
         default:
         {
             _tprintf(_T("Erro: %lu\n"), GetLastError());
@@ -578,7 +571,7 @@ DWORD WINAPI threadAlertas(LPVOID param)
 //
 // void receberAlerta(EstadoPlacar* estado) {}
 
-void receberAlerta(EstadoPlacar *estado, BYTE *buffer, DWORD bytes)
+void receberAlerta(EstadoPlacar* estado, BYTE* buffer, DWORD bytes)
 {
     /*
      * TODO (M2):
@@ -622,13 +615,17 @@ void receberAlerta(EstadoPlacar *estado, BYTE *buffer, DWORD bytes)
 
     switch (tipo) {
 
-    // Tipo MSG_TIPO_ALERTA
+        // Tipo MSG_TIPO_ALERTA
     case MSG_TIPO_ALERTA:
     {
-        MSG_ALERTA *alerta = (MSG_ALERTA *)buffer;
+        MSG_ALERTA* alerta = (MSG_ALERTA*)buffer;
 
-        // Confirma a recepcao
-        enviarMensagem_placar(estado->hPipe, alerta, sizeof(MSG_ALERTA));
+        //  CORREÇÃO: Verificar sucesso do envio da confirmação.
+        // O código original ignorava falhas de rede, deixando o estado inconsistente.
+        if (!enviarMensagem_placar(estado->hPipe, alerta, sizeof(MSG_ALERTA))) {
+            _tprintf(_T("Falha ao confirmar alerta. Pipe possivelmente fechado.\n"));
+            break;
+        }
 
         EnterCriticalSection(&estado->cs);
 
@@ -638,7 +635,7 @@ void receberAlerta(EstadoPlacar *estado, BYTE *buffer, DWORD bytes)
         }
 
         estado->alertaAtivo = *alerta;
-        estado->temAlerta   = TRUE;
+        estado->temAlerta = TRUE;
 
         LeaveCriticalSection(&estado->cs);
 
@@ -657,10 +654,13 @@ void receberAlerta(EstadoPlacar *estado, BYTE *buffer, DWORD bytes)
     // Tipo MSG_TIPO_CANCELAR
     case MSG_TIPO_CANCELAR:
     {
-        MSG_CMD_CP *cmd = (MSG_CMD_CP *)buffer;
+        MSG_CMD_CP* cmd = (MSG_CMD_CP*)buffer;
 
-        // Confirma a recepcao
-        enviarMensagem_placar(estado->hPipe, cmd, sizeof(MSG_CMD_CP));
+        //  CORREÇÃO: Verificar sucesso do envio da confirmação.
+        if (!enviarMensagem_placar(estado->hPipe, cmd, sizeof(MSG_CMD_CP))) {
+            _tprintf(_T("Falha ao confirmar cancelamento.\n"));
+            break;
+        }
 
         /* CORRECAO: cancelarAlertaAtivo() ja limpa estado->temAlerta e cancela
          * o timer. A versao anterior chamava tambem apresentarFimAlerta() aqui
@@ -668,6 +668,9 @@ void receberAlerta(EstadoPlacar *estado, BYTE *buffer, DWORD bytes)
          * resultando em dois outputs. Corrigido: remover o _tprintf de
          * cancelarAlertaAtivo (ver comentario nessa funcao) e mostrar apenas
          * o formato exigido pelo enunciado: "DD/MM/AAAA (HH:MM:SS): '---'". */
+        EnterCriticalSection(&estado->cs);
+        estado->temAlerta = FALSE;
+        LeaveCriticalSection(&estado->cs);
         cancelarAlertaAtivo(estado);
         apresentarFimAlerta();
 
@@ -694,7 +697,7 @@ void receberAlerta(EstadoPlacar *estado, BYTE *buffer, DWORD bytes)
  * Comunicacao com o central
  * ----------------------------------------------------------------------- */
 
-BOOL enviarMensagem_placar(HANDLE hPipe, const void *dados, DWORD tamanho)
+BOOL enviarMensagem_placar(HANDLE hPipe, const void* dados, DWORD tamanho)
 {
     /*
      * TODO:
@@ -717,8 +720,8 @@ BOOL enviarMensagem_placar(HANDLE hPipe, const void *dados, DWORD tamanho)
     HANDLE hEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
     if (hEvent == NULL) return FALSE;
 
-    OVERLAPPED ov    = {0};
-    ov.hEvent        = hEvent;
+    OVERLAPPED ov = { 0 };
+    ov.hEvent = hEvent;
     DWORD bytesEscritos = 0;
 
     BOOL ok = WriteFile(hPipe, dados, tamanho, NULL, &ov);
@@ -733,7 +736,7 @@ BOOL enviarMensagem_placar(HANDLE hPipe, const void *dados, DWORD tamanho)
     return ok && (bytesEscritos == tamanho);
 }
 
-BOOL receberMensagem_placar(HANDLE hPipe, void *buffer, DWORD tamanhoMax, DWORD *bytesLidos)
+BOOL receberMensagem_placar(HANDLE hPipe, void* buffer, DWORD tamanhoMax, DWORD* bytesLidos)
 {
     /*
      * TODO:
@@ -757,9 +760,9 @@ BOOL receberMensagem_placar(HANDLE hPipe, void *buffer, DWORD tamanhoMax, DWORD 
     HANDLE hEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
     if (hEvent == NULL) return FALSE;
 
-    OVERLAPPED ov = {0};
-    ov.hEvent     = hEvent;
-    *bytesLidos   = 0;
+    OVERLAPPED ov = { 0 };
+    ov.hEvent = hEvent;
+    *bytesLidos = 0;
 
     BOOL ok = ReadFile(hPipe, buffer, tamanhoMax, NULL, &ov);
     if (!ok && GetLastError() != ERROR_IO_PENDING) {
@@ -777,7 +780,7 @@ BOOL receberMensagem_placar(HANDLE hPipe, void *buffer, DWORD tamanhoMax, DWORD 
  * Gestao de alertas (sem alteracoes face a M1)
  * ----------------------------------------------------------------------- */
 
-void apresentarAlerta(const MSG_ALERTA *alerta)
+void apresentarAlerta(const MSG_ALERTA* alerta)
 {
     TCHAR datahora[32];
     obterDataHoraAtual(datahora, 32);
@@ -791,12 +794,12 @@ void apresentarFimAlerta(void)
     _tprintf(_T("%s: '---'\n"), datahora);
 }
 
-void cancelarAlertaAtivo(EstadoPlacar *estado)
+void cancelarAlertaAtivo(EstadoPlacar* estado)
 {
     /* Nota: assume que a critical section esta adquirida pelo chamador
      * OU que nao ha conflito. Ajustar conforme necessario. */
 
-    // Ajustado para garantir que o estado e verificado e modificado de forma segura
+     // Ajustado para garantir que o estado e verificado e modificado de forma segura
 
     if (estado == NULL)
         return;
@@ -824,7 +827,7 @@ void cancelarAlertaAtivo(EstadoPlacar *estado)
  * Utilitarios (sem alteracoes face a M1)
  * ----------------------------------------------------------------------- */
 
-void obterDataHoraAtual(TCHAR *buffer, DWORD tamanho)
+void obterDataHoraAtual(TCHAR* buffer, DWORD tamanho)
 {
     SYSTEMTIME st;
     GetLocalTime(&st);
