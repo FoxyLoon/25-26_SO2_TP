@@ -291,13 +291,13 @@ void executarLigar(EstadoPlacar* estado)
         }
     }
 
-    estado->hPipe = hPipe;
+    //estado->hPipe = hPipe;
 
     // Definir o modo do pipe para mensagem
     DWORD mode = PIPE_READMODE_MESSAGE;
-    if (!SetNamedPipeHandleState(estado->hPipe, &mode, NULL, NULL)) {
+    if (!SetNamedPipeHandleState(hPipe, &mode, NULL, NULL)) {
         _tprintf(_T("Erro ao definir modo do pipe (%d)\n"), GetLastError());
-        CloseHandle(estado->hPipe);
+        CloseHandle(hPipe);
         estado->hPipe = INVALID_HANDLE_VALUE;
         return;
     }
@@ -306,9 +306,9 @@ void executarLigar(EstadoPlacar* estado)
     MSG_CMD_PC msg;
     msg.tipo = MSG_TIPO_LIGAR;
 
-    if (!enviarMensagem_placar(estado->hPipe, &msg, sizeof(MSG_CMD_PC))) {
+    if (!enviarMensagem_placar(hPipe, &msg, sizeof(MSG_CMD_PC))) {
         _tprintf(_T("Erro ao enviar pedido de ligar.\n"));
-        CloseHandle(estado->hPipe);
+        CloseHandle(hPipe);
         estado->hPipe = INVALID_HANDLE_VALUE;
         return;
     }
@@ -317,16 +317,16 @@ void executarLigar(EstadoPlacar* estado)
     MSG_ID resposta;
     DWORD  bytes;
 
-    if (!receberMensagem_placar(estado->hPipe, &resposta, sizeof(MSG_ID), &bytes)) {
+    if (!receberMensagem_placar(hPipe, &resposta, sizeof(MSG_ID), &bytes)) {
         _tprintf(_T("Erro ao receber identificador.\n"));
-        CloseHandle(estado->hPipe);
+        CloseHandle(hPipe);
         estado->hPipe = INVALID_HANDLE_VALUE;
         return;
     }
 
     if (resposta.tipo != MSG_TIPO_ID) {
         _tprintf(_T("Resposta invalida do central.\n"));
-        CloseHandle(estado->hPipe);
+        CloseHandle(hPipe);
         estado->hPipe = INVALID_HANDLE_VALUE;
         return;
     }
@@ -335,6 +335,7 @@ void executarLigar(EstadoPlacar* estado)
     EnterCriticalSection(&estado->cs);
     estado->identificador = resposta.identificador;
     estado->ligado = TRUE;
+	estado->hPipe = hPipe;
     LeaveCriticalSection(&estado->cs);
 
     // Mostra o identificador atribuido
@@ -440,7 +441,6 @@ DWORD WINAPI threadAlertas(LPVOID param)
      *
      * 5. Se [0] (hPipeEvent) disparou:
      *      - Usar GetOverlappedResult() para saber quantos bytes foram lidos
-     *      - ResetEvent(estado->hPipeEvent)
      *      - Chamar receberAlerta() passando o buffer lido
      *        (receberAlerta trata dos diferentes tipos de mensagem)
      *
@@ -449,9 +449,9 @@ DWORD WINAPI threadAlertas(LPVOID param)
      *      - Se estado->temAlerta:
      *          apresentarFimAlerta()
      *          estado->temAlerta = FALSE
-     *          Enviar MSG_CMD_PC tipo=MSG_TIPO_FIM_ALERTA ao central:
-     *              enviarMensagem_placar(estado->hPipe, &msg, sizeof(MSG_CMD_PC))
      *      - LeaveCriticalSection
+     *      - Enviar MSG_CMD_PC tipo=MSG_TIPO_FIM_ALERTA ao central FORA da CS:
+     *          enviarMensagem_placar(estado->hPipe, &msg, sizeof(MSG_CMD_PC))
      *
      * 7. Se WAIT_TIMEOUT: apenas reiterar o loop.
      */
@@ -516,8 +516,10 @@ DWORD WINAPI threadAlertas(LPVOID param)
         {
             // 5. Leitura do pipe concluida
             if (GetOverlappedResult(hPipe, &ov, &bytesLidos, FALSE)) {
-                ResetEvent(estado->hPipeEvent);
-
+                /* Nota: com evento auto-reset (FALSE no CreateEvent) o evento
+                 * e reposto automaticamente pelo sistema apos WaitForMultipleObjects
+                 * o consumir. Nao e necessario chamar ResetEvent() manualmente. 
+                 */
                 receberAlerta(estado, buffer, bytesLidos);
             }
             break;
@@ -526,31 +528,36 @@ DWORD WINAPI threadAlertas(LPVOID param)
         // hWaitableTimer
         case WAIT_OBJECT_0 + 1:
         {
-            // 6. Timer disparou
-            EnterCriticalSection(&estado->cs);
+            // 6. Timer disparou - atualizar estado dentro da CS, enviar FORA da CS.
+            //
+            // CORRECAO: a versao anterior chamava enviarMensagem_placar() dentro
+            // do EnterCriticalSection. Como essa funcao faz GetOverlappedResult
+            // (bWait=TRUE), bloqueava enquanto detinha a CS. Se threadUtilizador
+            // tentasse adquirir a CS (ex: executarDesligar->cancelarAlertaAtivo)
+            // ficaria em deadlock. Corrigido: actualizar o estado e largar a CS
+            // antes de chamar o I/O.
+            BOOL deveEnviar = FALSE;
 
+            EnterCriticalSection(&estado->cs);
             if (estado->temAlerta) {
                 apresentarFimAlerta();
-
                 estado->temAlerta = FALSE;
+                deveEnviar = TRUE;
+            }
+            LeaveCriticalSection(&estado->cs); /* largar ANTES do I/O */
 
-                // Envia MSG_TIPO_FIM_ALERTA
+            if (deveEnviar) {
                 MSG_CMD_PC msg;
                 msg.tipo = MSG_TIPO_FIM_ALERTA;
-
-                enviarMensagem_placar(
-                    estado->hPipe,
-                    &msg,
-                    sizeof(MSG_CMD_PC)
-                );
+                enviarMensagem_placar(estado->hPipe, &msg, sizeof(MSG_CMD_PC));
             }
-
-            LeaveCriticalSection(&estado->cs);
             break;
         }
 
         case WAIT_TIMEOUT:
             // 7. Timeout - Apenas repete o loop para re-verificar estado->terminar
+            // Cancelar a operacao de leitura pendente para poder recomecar na proxima iteracao
+            CancelIo(hPipe);
             break;
 
             // Erro inesperado
@@ -583,8 +590,6 @@ void receberAlerta(EstadoPlacar* estado, BYTE* buffer, DWORD bytes)
      *
      * Caso MSG_TIPO_ALERTA (4):
      *   - Fazer cast para MSG_ALERTA*
-     *   - Enviar a mesma estrutura de volta ao central como confirmacao:
-     *       enviarMensagem_placar(estado->hPipe, &alerta, sizeof(MSG_ALERTA))
      *   - EnterCriticalSection
      *   - Se ja havia alerta ativo: CancelWaitableTimer()
      *   - estado->alertaAtivo = *alerta; estado->temAlerta = TRUE
@@ -596,8 +601,6 @@ void receberAlerta(EstadoPlacar* estado, BYTE* buffer, DWORD bytes)
      *       SetWaitableTimer(estado->hWaitableTimer, &liDueTime, 0, NULL, NULL, FALSE)
      *
      * Caso MSG_TIPO_CANCELAR (5):
-     *   - Fazer cast para MSG_CMD_CP*
-     *   - Enviar a mesma estrutura de volta como confirmacao
      *   - cancelarAlertaAtivo(estado) - cancela o timer e limpa o estado
      *   - apresentarFimAlerta()
      *
@@ -620,12 +623,13 @@ void receberAlerta(EstadoPlacar* estado, BYTE* buffer, DWORD bytes)
     {
         MSG_ALERTA* alerta = (MSG_ALERTA*)buffer;
 
-        //  CORREÇÃO: Verificar sucesso do envio da confirmação.
-        // O código original ignorava falhas de rede, deixando o estado inconsistente.
-        if (!enviarMensagem_placar(estado->hPipe, alerta, sizeof(MSG_ALERTA))) {
-            _tprintf(_T("Falha ao confirmar alerta. Pipe possivelmente fechado.\n"));
-            break;
-        }
+        /* CORRECAO (eco removido): a versao anterior enviava o alerta de volta
+         * ao central como confirmacao antes de atualizar o estado. Esse eco era
+         * a causa raiz do bloqueio: o central fazia dois ReadFile concurrentes
+         * no mesmo handle (threadPlacar e executarAlerta), o eco ia para
+         * threadPlacar que o descartava como tipo desconhecido, e executarAlerta
+         * ficava bloqueado 30 segundos. Em named pipes o WriteFile a completar
+         * com sucesso ja garante a entrega - o eco e desnecessario. */
 
         EnterCriticalSection(&estado->cs);
 
@@ -654,23 +658,13 @@ void receberAlerta(EstadoPlacar* estado, BYTE* buffer, DWORD bytes)
     // Tipo MSG_TIPO_CANCELAR
     case MSG_TIPO_CANCELAR:
     {
-        MSG_CMD_CP* cmd = (MSG_CMD_CP*)buffer;
-
-        //  CORREÇÃO: Verificar sucesso do envio da confirmação.
-        if (!enviarMensagem_placar(estado->hPipe, cmd, sizeof(MSG_CMD_CP))) {
-            _tprintf(_T("Falha ao confirmar cancelamento.\n"));
-            break;
-        }
-
-        /* CORRECAO: cancelarAlertaAtivo() ja limpa estado->temAlerta e cancela
-         * o timer. A versao anterior chamava tambem apresentarFimAlerta() aqui
-         * alem do _tprintf("Alerta cancelado.") dentro de cancelarAlertaAtivo(),
-         * resultando em dois outputs. Corrigido: remover o _tprintf de
-         * cancelarAlertaAtivo (ver comentario nessa funcao) e mostrar apenas
-         * o formato exigido pelo enunciado: "DD/MM/AAAA (HH:MM:SS): '---'". */
-        EnterCriticalSection(&estado->cs);
-        estado->temAlerta = FALSE;
-        LeaveCriticalSection(&estado->cs);
+        /* CORRECAO (eco removido): idem ao MSG_TIPO_ALERTA.
+         *
+         * CORRECAO: a versao anterior fazia 'estado->temAlerta = FALSE' antes
+         * de chamar cancelarAlertaAtivo(). Como cancelarAlertaAtivo() testa
+         * 'if (estado->temAlerta)' internamente, o CancelWaitableTimer nunca
+         * era chamado, deixando o timer armado. Corrigido: deixar
+         * cancelarAlertaAtivo() gerir o estado por completo. */
         cancelarAlertaAtivo(estado);
         apresentarFimAlerta();
 

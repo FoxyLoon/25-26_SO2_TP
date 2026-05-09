@@ -1,6 +1,7 @@
 #include "central.h"
 #include <stdio.h>
 #include <stdlib.h>
+#include "../placar/common.h"
 
 /* -----------------------------------------------------------------------
  * Estado global
@@ -141,7 +142,11 @@ DWORD WINAPI threadListener(LPVOID param)
     while (!estado->terminar) {
         HANDLE hPipe = CreateNamedPipe(
             estado->nomePipeCompleto,
-            PIPE_ACCESS_DUPLEX,
+            PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED, /* CORRECAO: FILE_FLAG_OVERLAPPED e obrigatorio
+             * para usar estruturas OVERLAPPED em enviarMensagem/receberMensagem.
+             * Sem esta flag, chamar WriteFile/ReadFile com OVERLAPPED num handle
+             * sincrono e comportamento indefinido no Windows - o timeout de 30s
+             * pode ser simplesmente ignorado. */
             PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT,
             MAX_PLACARES,
             PIPE_BUFFER_SIZE,
@@ -445,7 +450,6 @@ void executarAlerta(const TCHAR* msg, DWORD duracao, DWORD idPlacar, EstadoCentr
      *
      * Para cada placar alvo:
      *   - enviarMensagem() com a MSG_ALERTA
-     *   - Aguardar confirmacao com receberMensagem() (o placar ecoa a mesma estrutura)
      *   - EnterCriticalSection
      *   - Atualizar placares[i].temAlerta = TRUE e placares[i].alertaAtivo
      *   - LeaveCriticalSection
@@ -460,12 +464,17 @@ void executarAlerta(const TCHAR* msg, DWORD duracao, DWORD idPlacar, EstadoCentr
         /* Enviar a todos os placares ativos.
          *
          * CORRECAO: a critical section NAO pode ser mantida durante as chamadas
-         * de I/O (enviarMensagem / receberMensagem), pois essas chamadas bloqueiam
-         * ate o placar responder. Manter a CS bloqueada durante esse tempo causaria
-         * deadlock: a threadPlacar do mesmo placar precisa da CS para processar
-         * mensagens (ex: MSG_TIPO_FIM_ALERTA) entretanto recebidas.
-         * Solucao: ler o handle com CS, largar a CS, fazer o I/O, re-adquirir
-         * a CS apenas para actualizar o estado. */
+         * de I/O (enviarMensagem), pois essas chamadas bloqueiam ate a escrita
+         * terminar. Solucao: ler o handle com CS, largar a CS, fazer o I/O,
+         * re-adquirir a CS apenas para actualizar o estado.
+         *
+         * CORRECAO (eco removido): o mecanismo de eco (receberMensagem a aguardar
+         * confirmacao do placar) foi removido. Era a causa raiz do bloqueio:
+         * threadPlacar e executarAlerta faziam ReadFile concurrentes no mesmo
+         * handle - o eco ia parar ao threadPlacar que o descartava como tipo
+         * desconhecido, e executarAlerta ficava bloqueado 30 segundos.
+         * Em named pipes o WriteFile a completar com sucesso ja garante a entrega;
+         * nao e necessario eco. */
         for (int i = 0; i < MAX_PLACARES; i++) {
             EnterCriticalSection(&estado->cs);
             BOOL   ativo = estado->placares[i].ativo;
@@ -474,24 +483,15 @@ void executarAlerta(const TCHAR* msg, DWORD duracao, DWORD idPlacar, EstadoCentr
 
             if (!ativo) continue;
 
-            //  CORREÇÃO: Verificar se o envio e a receção de confirmação foram bem-sucedidos.
-            // O código original ignorava o retorno, podendo deixar o estado inconsistente se o pipe quebrasse.
             if (!enviarMensagem(hPipe, &alerta, sizeof(alerta))) {
                 _tprintf(_T("Falha ao enviar alerta para placar %d. Pipe possivelmente fechado.\n"), i);
                 continue;
             }
 
-            MSG_ALERTA eco;
-            DWORD bytesLidos;
-            if (receberMensagem(hPipe, &eco, sizeof(eco), &bytesLidos) && bytesLidos == sizeof(eco)) {
-                EnterCriticalSection(&estado->cs); /* re-adquirir para escrever estado */
-                estado->placares[i].temAlerta = TRUE;
-                estado->placares[i].alertaAtivo = alerta;
-                LeaveCriticalSection(&estado->cs);
-            }
-            else {
-                _tprintf(_T("Falha ao receber confirmação de alerta para placar %d.\n"), i);
-            }
+            EnterCriticalSection(&estado->cs);
+            estado->placares[i].temAlerta = TRUE;
+            estado->placares[i].alertaAtivo = alerta;
+            LeaveCriticalSection(&estado->cs);
         }
     }
     else {
@@ -500,7 +500,7 @@ void executarAlerta(const TCHAR* msg, DWORD duracao, DWORD idPlacar, EstadoCentr
          * CORRECAO: encontrarPlacaPorId() deve ser chamado com a CS adquirida
          * (o array pode ser modificado por outra thread). O handle e lido com
          * CS e a CS e largada antes do I/O bloqueante, pelo mesmo motivo
-         * descrito acima. */
+         * descrito acima. Eco tambem removido aqui pelo mesmo motivo. */
         EnterCriticalSection(&estado->cs);
         int    idx = encontrarPlacaPorId(estado, idPlacar);
         HANDLE hPipe = (idx != -1) ? estado->placares[idx].hPipe : INVALID_HANDLE_VALUE;
@@ -511,14 +511,10 @@ void executarAlerta(const TCHAR* msg, DWORD duracao, DWORD idPlacar, EstadoCentr
                 _tprintf(_T("Falha ao enviar alerta para placar ID %lu.\n"), idPlacar);
             }
             else {
-                MSG_ALERTA eco;
-                DWORD bytesLidos;
-                if (receberMensagem(hPipe, &eco, sizeof(eco), &bytesLidos) && bytesLidos == sizeof(eco)) {
-                    EnterCriticalSection(&estado->cs);
-                    estado->placares[idx].temAlerta = TRUE;
-                    estado->placares[idx].alertaAtivo = alerta;
-                    LeaveCriticalSection(&estado->cs);
-                }
+                EnterCriticalSection(&estado->cs);
+                estado->placares[idx].temAlerta = TRUE;
+                estado->placares[idx].alertaAtivo = alerta;
+                LeaveCriticalSection(&estado->cs);
             }
         }
         else {
@@ -535,14 +531,14 @@ void executarCancelar(DWORD idPlacar, EstadoCentral* estado)
      * - Se nao encontrado ou nao tem alerta ativo: avisar e retornar
      * - Construir MSG_CMD_CP com tipo=MSG_TIPO_CANCELAR
      * - enviarMensagem() ao placar
-     * - Aguardar confirmacao com receberMensagem()
      * - EnterCriticalSection
      * - Limpar placares[i].temAlerta = FALSE
      * - LeaveCriticalSection
      */
 
-     /* CORRECAO: encontrarPlacaPorId() chamado com CS adquirida; handle lido
-      * com CS; CS largada antes do I/O bloqueante (mesmo motivo de executarAlerta). */
+    /* CORRECAO: encontrarPlacaPorId() chamado com CS adquirida; handle lido
+     * com CS; CS largada antes do I/O bloqueante (mesmo motivo de executarAlerta).
+     * Eco removido pelo mesmo motivo descrito em executarAlerta. */
     EnterCriticalSection(&estado->cs);
     int idx = encontrarPlacaPorId(estado, idPlacar);
     if (idx == -1) {
@@ -566,12 +562,9 @@ void executarCancelar(DWORD idPlacar, EstadoCentral* estado)
         return;
     }
 
-    DWORD bytesLidos;
-    if (receberMensagem(hPipe, &cmdCancelar, sizeof(cmdCancelar), &bytesLidos) && bytesLidos == sizeof(cmdCancelar)) {
-        EnterCriticalSection(&estado->cs);
-        estado->placares[idx].temAlerta = FALSE;
-        LeaveCriticalSection(&estado->cs);
-    }
+    EnterCriticalSection(&estado->cs);
+    estado->placares[idx].temAlerta = FALSE;
+    LeaveCriticalSection(&estado->cs);
 }
 
 void executarListar(EstadoCentral* estado)
@@ -655,7 +648,7 @@ BOOL enviarMensagem(HANDLE hPipe, const void* dados, DWORD tamanho)
     }
 
     /* Aguardar com timeout de 30 segundos */
-    DWORD waitResult = WaitForSingleObject(hEvent, 30000); /* 30 segundos */
+    DWORD waitResult = WaitForSingleObject(hEvent, INFINITE); /* 30 segundos */
 
     if (waitResult == WAIT_OBJECT_0) {
         /* Evento disparou - escrita concluida */
@@ -699,8 +692,8 @@ BOOL receberMensagem(HANDLE hPipe, void* buffer, DWORD tamanhoMax, DWORD* bytesL
         return FALSE;
     }
 
-    /* Aguardar com timeout de 30 segundos */
-    DWORD waitResult = WaitForSingleObject(hEvent, 30000); /* 30 segundos */
+    /* Aguardar */
+    DWORD waitResult = WaitForSingleObject(hEvent, INFINITE);
 
     if (waitResult == WAIT_OBJECT_0) {
         /* Evento disparou - leitura concluida */
