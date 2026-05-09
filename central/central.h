@@ -11,10 +11,11 @@
 #define CENTRAL_CMD_CANCELAR    _T("cancelar")
 #define CENTRAL_CMD_LISTAR      _T("listar")
 #define CENTRAL_CMD_ENCERRAR    _T("encerrar")
+#define CENTRAL_CMD_AJUDA       _T("ajuda")
 
 #define CENTRAL_MAX_CMD_LEN     256
 
-/* Prefixo do named pipe do sistema */
+ /* Prefixo do named pipe do sistema */
 #define PIPE_PREFIX             _T("\\\\.\\pipe\\")
 
 /* Tamanho do buffer do named pipe */
@@ -52,7 +53,7 @@ typedef struct {
  * ----------------------------------------------------------------------- */
 
 typedef struct {
-    EstadoCentral *estado;
+    EstadoCentral* estado;
     int            indicePlacar; /* indice em estado->placares[] */
 } ArgThreadPlacar;
 
@@ -60,9 +61,9 @@ typedef struct {
  * Prototipos das funcoes
  * ----------------------------------------------------------------------- */
 
-/* Inicializacao e limpeza */
-BOOL  inicializar_central(EstadoCentral *estado, int argc, TCHAR *argv[]);
-BOOL  libertar_central(EstadoCentral *estado);
+ /* Inicializacao e limpeza */
+BOOL  inicializar_central(EstadoCentral* estado, int argc, TCHAR* argv[]);
+BOOL  libertar_central(EstadoCentral* estado);
 
 /* Threads */
 DWORD WINAPI threadListener(LPVOID param);
@@ -70,22 +71,23 @@ DWORD WINAPI threadPlacar(LPVOID param);
 DWORD WINAPI threadUtilizador_central(LPVOID param);
 
 /* Processamento de comandos do administrador */
-void  processarComando_central(const TCHAR *linha, EstadoCentral *estado);
-void  executarAlerta(const TCHAR *msg, DWORD duracao, DWORD idPlacar, EstadoCentral *estado);
-void  executarCancelar(DWORD idPlacar, EstadoCentral *estado);
-void  executarListar(EstadoCentral *estado);
-void  executarEncerrar(EstadoCentral *estado);
+void  processarComando_central(const TCHAR* linha, EstadoCentral* estado);
+void  executarAlerta(const TCHAR* msg, DWORD duracao, DWORD idPlacar, EstadoCentral* estado);
+void  executarCancelar(DWORD idPlacar, EstadoCentral* estado);
+void  executarListar(EstadoCentral* estado);
+void  executarEncerrar(EstadoCentral* estado);
+void  executarAjuda_central(void);
 
 /* Comunicacao com os placares */
-BOOL  enviarMensagem(HANDLE hPipe, const void *dados, DWORD tamanho);
-BOOL  receberMensagem(HANDLE hPipe, void *buffer, DWORD tamanhoMax, DWORD *bytesLidos);
+BOOL  enviarMensagem(HANDLE hPipe, const void* dados, DWORD tamanho);
+BOOL  receberMensagem(HANDLE hPipe, void* buffer, DWORD tamanhoMax, DWORD* bytesLidos);
 
 /* Gestao de placares */
-int   encontrarPlacaPorId(EstadoCentral *estado, DWORD id);
-int   encontrarSlotLivre(EstadoCentral *estado);
-void  removerPlacar(EstadoCentral *estado, int indice);
+int   encontrarPlacaPorId(EstadoCentral* estado, DWORD id);
+int   encontrarSlotLivre(EstadoCentral* estado);
+void  removerPlacar(EstadoCentral* estado, int indice);
 
 /* Utilitarios */
-void  obterDataHoraAtual_central(TCHAR *buffer, DWORD tamanho);
+void  obterDataHoraAtual_central(TCHAR* buffer, DWORD tamanho);
 
 #endif /* CENTRAL_H */
