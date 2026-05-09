@@ -9,10 +9,11 @@
 
 #define PLACAR_CMD_LIGAR    _T("liga")
 #define PLACAR_CMD_DESLIGAR _T("desliga")
+#define PLACAR_CMD_AJUDA    _T("ajuda")
 
 #define PLACAR_MAX_CMD_LEN  64
 
-/* Prefixo do named pipe (deve ser igual ao usado no central) */
+ /* Prefixo do named pipe (deve ser igual ao usado no central) */
 #define PIPE_PREFIX         _T("\\\\.\\pipe\\")
 
 /* Tamanho do buffer de leitura do pipe */
@@ -44,34 +45,35 @@ typedef struct {
  * Prototipos das funcoes
  * ----------------------------------------------------------------------- */
 
-/* Inicializacao e limpeza */
-BOOL  inicializar(EstadoPlacar *estado, int argc, TCHAR *argv[]);
-BOOL  libertar(EstadoPlacar *estado);
+ /* Inicializacao e limpeza */
+BOOL  inicializar(EstadoPlacar* estado, int argc, TCHAR* argv[]);
+BOOL  libertar(EstadoPlacar* estado);
 
 /* Registry */
-BOOL  lerNomePipeDoRegistry(TCHAR *buffer, DWORD tamanho);
-BOOL  guardarNomePipeNoRegistry(const TCHAR *nomePipe);
+BOOL  lerNomePipeDoRegistry(TCHAR* buffer, DWORD tamanho);
+BOOL  guardarNomePipeNoRegistry(const TCHAR* nomePipe);
 
 /* Threads */
 DWORD WINAPI threadUtilizador(LPVOID param);
 DWORD WINAPI threadAlertas(LPVOID param);
 
 /* Comandos do utilizador */
-void  processarComando(const TCHAR *cmd, EstadoPlacar *estado);
-void  executarLigar(EstadoPlacar *estado);
-void  executarDesligar(EstadoPlacar *estado);
+void  processarComando(const TCHAR* cmd, EstadoPlacar* estado);
+void  executarLigar(EstadoPlacar* estado);
+void  executarDesligar(EstadoPlacar* estado);
+void  executarAjuda_placar(void);
 
 /* Comunicacao com o central */
-BOOL  enviarMensagem_placar(HANDLE hPipe, const void *dados, DWORD tamanho);
-BOOL  receberMensagem_placar(HANDLE hPipe, void *buffer, DWORD tamanhoMax, DWORD *bytesLidos);
+BOOL  enviarMensagem_placar(HANDLE hPipe, const void* dados, DWORD tamanho);
+BOOL  receberMensagem_placar(HANDLE hPipe, void* buffer, DWORD tamanhoMax, DWORD* bytesLidos);
 
 /* Gestao de alertas */
-void  receberAlerta(EstadoPlacar *estado);
-void  apresentarAlerta(const MSG_ALERTA *alerta);
+void  receberAlerta(EstadoPlacar* estado, BYTE* buffer, DWORD bytes);
+void  apresentarAlerta(const MSG_ALERTA* alerta);
 void  apresentarFimAlerta(void);
-void  cancelarAlertaAtivo(EstadoPlacar *estado);
+void  cancelarAlertaAtivo(EstadoPlacar* estado);
 
 /* Utilitarios */
-void  obterDataHoraAtual(TCHAR *buffer, DWORD tamanho);
+void  obterDataHoraAtual(TCHAR* buffer, DWORD tamanho);
 
 #endif /* PLACAR_H */
