@@ -62,6 +62,7 @@ BOOL inicializar_central(EstadoCentral* estado, int argc, TCHAR* argv[])
     estado->numPlacares = 0;
     estado->proximoId = 1;
     estado->terminar = FALSE;
+    estado->hPipeListener = INVALID_HANDLE_VALUE;
     memset(estado->placares, 0, sizeof(estado->placares));
 
     return TRUE;
@@ -103,10 +104,19 @@ DWORD WINAPI threadListener(LPVOID param)
             continue;
         }
 
+        /* Guardar o handle do pipe listener para debloqueio durante encerramento */
+        EnterCriticalSection(&estado->cs);
+        estado->hPipeListener = hPipe;
+        LeaveCriticalSection(&estado->cs);
+
         if (!ConnectNamedPipe(hPipe, NULL) && GetLastError() != ERROR_PIPE_CONNECTED) {
             CloseHandle(hPipe);
             continue;
         }
+
+        EnterCriticalSection(&estado->cs);
+        estado->hPipeListener = INVALID_HANDLE_VALUE;
+        LeaveCriticalSection(&estado->cs);
 
         EnterCriticalSection(&estado->cs);
         int slot = encontrarSlotLivre(estado);
@@ -435,6 +445,14 @@ void executarEncerrar(EstadoCentral* estado)
             enviarMensagem(estado->placares[i].hPipe, &cmdEncerrar, sizeof(cmdEncerrar));
         }
     }
+
+    /* Fechar o pipe listener para deblocar a thread listener que esta a aguardar ConnectNamedPipe() */
+    if (estado->hPipeListener != INVALID_HANDLE_VALUE) {
+        DisconnectNamedPipe(estado->hPipeListener);
+        CloseHandle(estado->hPipeListener);
+        estado->hPipeListener = INVALID_HANDLE_VALUE;
+    }
+
     estado->terminar = TRUE;
     LeaveCriticalSection(&estado->cs);
 }

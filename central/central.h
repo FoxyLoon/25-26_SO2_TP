@@ -45,6 +45,7 @@ typedef struct {
     int        numPlacares;                 /* numero de placares atualmente registados */
     DWORD      proximoId;                   /* proximo identificador a atribuir  */
     BOOL       terminar;                    /* TRUE quando se deve encerrar      */
+    HANDLE     hPipeListener;               /* handle do pipe listener para encerramento */
     CRITICAL_SECTION cs;                    /* protege o estado partilhado       */
 } EstadoCentral;
 
