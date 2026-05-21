@@ -463,13 +463,30 @@ void receberAlerta(EstadoPlacar* estado, BYTE* buffer, DWORD bytes)
 
         SetWaitableTimer(estado->hWaitableTimer, &liDueTime, 0, NULL, NULL, FALSE);
 
+        // 20260521 - envia a mesma estrutura MSG_ALERTA de volta
+        enviarMensagem_placar(
+            estado->hPipe,
+            alerta,
+            sizeof(MSG_ALERTA)
+        );
+
         break;
     }
 
     case MSG_TIPO_CANCELAR:
     {
+        MSG_CMD_CP* cancelar = (MSG_CMD_CP*)buffer;
+
         cancelarAlertaAtivo(estado);
         apresentarFimAlerta();
+
+        // 20260521 - envia a mesma estrutura MSG_CMD_CP de volta
+        enviarMensagem_placar(
+            estado->hPipe,
+            cancelar,
+            sizeof(MSG_CMD_CP)
+        );
+
         break;
     }
 

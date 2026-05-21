@@ -22,7 +22,7 @@
 #define MSG_TIPO_FIM_ALERTA 3	// notifica que o alerta terminou
 
 /* Tipos das mensagens - Central -> Placar */
-#define MSG_TIPO_ID         3	// resposta ao ligar, atribui o ID unico do placar
+#define MSG_TIPO_ID         7	// resposta ao ligar, atribui o ID unico do placar
 #define MSG_TIPO_ALERTA     4	// nova mensagem de alerta para o placar
 #define MSG_TIPO_CANCELAR   5	// cancelar alerta ativo (o placar deve parar de mostrar o alerta)
 #define MSG_TIPO_ENCERRAR   6	// encerrar a plataforma (o placar deve terminar imediatamente)
