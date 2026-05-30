@@ -47,6 +47,12 @@ typedef struct {
     BOOL       terminar;                    /* TRUE quando se deve encerrar      */
     HANDLE     hPipeListener;               /* handle do pipe listener para encerramento */
     CRITICAL_SECTION cs;                    /* protege o estado partilhado       */
+
+    /* M3: memoria partilhada + evento para o Monitor */
+    HANDLE     hFileMapping;               /* handle do file mapping da SHM     */
+    SHM_ALERTA* pShm;                      /* ponteiro para a vista mapeada     */
+    HANDLE     hEventMonitor;              /* evento auto-reset para monitores  */
+    TCHAR      nomeSHM[MAX_PATH];          /* nome do bloco SHM                 */
 } EstadoCentral;
 
 /* -----------------------------------------------------------------------
@@ -57,6 +63,12 @@ typedef struct {
     EstadoCentral* estado;
     int            indicePlacar; /* indice em estado->placares[] */
 } ArgThreadPlacar;
+
+/* -----------------------------------------------------------------------
+ * Mutex global nomeado para proteger o acesso a cada named pipe
+ * ----------------------------------------------------------------------- */
+
+extern HANDLE g_hMutexPipe;
 
 /* -----------------------------------------------------------------------
  * Prototipos das funcoes
@@ -90,5 +102,8 @@ void  removerPlacar(EstadoCentral* estado, int indice);
 
 /* Utilitarios */
 void  obterDataHoraAtual_central(TCHAR* buffer, DWORD tamanho);
+
+/* Memoria partilhada */
+void  atualizarSHM(EstadoCentral* estado);
 
 #endif /* CENTRAL_H */

@@ -59,10 +59,12 @@ typedef struct {
  * ----------------------------------------------------------------------- */
 
 typedef struct {
-	DWORD identificador;
-	DWORD duracao;
-	TCHAR msg[MAX_MSG_LEN];
-	BOOL  desligar;
+	struct {
+		DWORD identificador;
+		DWORD duracao;
+		TCHAR msg[MAX_MSG_LEN];
+	} placar[MAX_PLACARES];
+	BOOL desligar;
 } SHM_ALERTA;
 
 #endif /* COMMON_H */

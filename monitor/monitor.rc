@@ -1,0 +1,70 @@
+// Microsoft Visual C++ generated resource script.
+//
+#include "resource.h"
+
+#define APSTUDIO_READONLY_SYMBOLS
+/////////////////////////////////////////////////////////////////////////////
+//
+// Generated from the TEXTINCLUDE 2 resource.
+//
+#include "winres.h"
+
+/////////////////////////////////////////////////////////////////////////////
+#undef APSTUDIO_READONLY_SYMBOLS
+
+/////////////////////////////////////////////////////////////////////////////
+// Portugu�s (Portugal) resources
+
+#if !defined(AFX_RESOURCE_DLL) || defined(AFX_TARG_PTG)
+LANGUAGE LANG_PORTUGUESE, SUBLANG_PORTUGUESE
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// Menu
+//
+
+IDR_MENU1 MENU
+BEGIN
+    POPUP "Ficheiro"
+    BEGIN
+        MENUITEM "Configura\xe7\xe3o",    ID_FICHEIRO_CONFIG
+        MENUITEM "Acerca",                ID_FICHEIRO_ACERCA
+        MENUITEM "Sair",                  ID_FICHEIRO_SAIR
+    END
+END
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// Dialog
+//
+
+IDD_DIALOG_CONFIG DIALOGEX 0, 0, 260, 120
+STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Configura\xe7\xe3o"
+FONT 8, "MS Shell Dlg", 400, 0, 0x1
+BEGIN
+    LTEXT           "M\xe1x. alertas (1-20):", IDC_STATIC, 10, 14, 90, 10
+    EDITTEXT        IDC_EDIT_MAX_ALERTAS,       105, 12, 40, 12, ES_AUTOHSCROLL | ES_NUMBER
+
+    LTEXT           "Nome SHM:",                IDC_STATIC, 10, 34, 90, 10
+    EDITTEXT        IDC_EDIT_NOME_SHM,          105, 32, 140, 12, ES_AUTOHSCROLL
+
+    LTEXT           "Nome Evento:",             IDC_STATIC, 10, 54, 90, 10
+    EDITTEXT        IDC_EDIT_NOME_EVENTO,       105, 52, 140, 12, ES_AUTOHSCROLL
+
+    DEFPUSHBUTTON   "OK",                       IDOK,     150, 80, 50, 14
+    PUSHBUTTON      "Cancelar",                 IDCANCEL, 205, 80, 50, 14
+END
+
+#endif    // Portugu�s (Portugal) resources
+/////////////////////////////////////////////////////////////////////////////
+
+#ifndef APSTUDIO_INVOKED
+/////////////////////////////////////////////////////////////////////////////
+//
+// Generated from the TEXTINCLUDE 3 resource.
+//
+
+
+/////////////////////////////////////////////////////////////////////////////
+#endif    // not APSTUDIO_INVOKED

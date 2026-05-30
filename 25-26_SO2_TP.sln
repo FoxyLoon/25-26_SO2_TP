@@ -1,11 +1,13 @@
 ﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
-# Visual Studio Version 17
-VisualStudioVersion = 17.14.37027.9
+# Visual Studio Version 18
+VisualStudioVersion = 18.6.11822.322 stable
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "placar", "placar\placar.vcxproj", "{5FA59D8B-02C1-42E5-802B-0BE5AF1BD984}"
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "central", "central\central.vcxproj", "{562511EE-6E63-488B-B82B-4E896EF26573}"
+EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "monitor", "monitor\monitor.vcxproj", "{8DF24D7B-9E8C-4318-8179-D12A87277EEB}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -31,6 +33,14 @@ Global
 		{562511EE-6E63-488B-B82B-4E896EF26573}.Release|x64.Build.0 = Release|x64
 		{562511EE-6E63-488B-B82B-4E896EF26573}.Release|x86.ActiveCfg = Release|Win32
 		{562511EE-6E63-488B-B82B-4E896EF26573}.Release|x86.Build.0 = Release|Win32
+		{8DF24D7B-9E8C-4318-8179-D12A87277EEB}.Debug|x64.ActiveCfg = Debug|x64
+		{8DF24D7B-9E8C-4318-8179-D12A87277EEB}.Debug|x64.Build.0 = Debug|x64
+		{8DF24D7B-9E8C-4318-8179-D12A87277EEB}.Debug|x86.ActiveCfg = Debug|Win32
+		{8DF24D7B-9E8C-4318-8179-D12A87277EEB}.Debug|x86.Build.0 = Debug|Win32
+		{8DF24D7B-9E8C-4318-8179-D12A87277EEB}.Release|x64.ActiveCfg = Release|x64
+		{8DF24D7B-9E8C-4318-8179-D12A87277EEB}.Release|x64.Build.0 = Release|x64
+		{8DF24D7B-9E8C-4318-8179-D12A87277EEB}.Release|x86.ActiveCfg = Release|Win32
+		{8DF24D7B-9E8C-4318-8179-D12A87277EEB}.Release|x86.Build.0 = Release|Win32
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
