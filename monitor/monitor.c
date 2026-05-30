@@ -18,6 +18,10 @@ int WINAPI _tWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     _tcscpy_s(g_estado.nomeSHM, MAX_PATH, NOME_SHM_PADRAO);
     _tcscpy_s(g_estado.nomeEvento, MAX_PATH, NOME_EVENTO_PADRAO);
     g_estado.terminar = FALSE;
+    g_estado.hFileMapping = NULL;
+    g_estado.pShm = NULL;
+    g_estado.hEvento = NULL;
+    g_estado.hThreadEscuta = NULL;
 
     /* Registar classe de janela */
     wc.lpfnWndProc = WndProc;
@@ -30,7 +34,8 @@ int WINAPI _tWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     wc.style = CS_VREDRAW | CS_HREDRAW;
 
     if (!RegisterClass(&wc)) {
-        _tprintf(_T("Erro ao registar classe de janela.\n"));
+        MessageBox(NULL, _T("Erro ao registar classe de janela."),
+                   APP_TITLE, MB_OK | MB_ICONERROR);
         return 1;
     }
 
@@ -45,7 +50,8 @@ int WINAPI _tWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     );
 
     if (hwnd == NULL) {
-        _tprintf(_T("Erro ao criar janela.\n"));
+        MessageBox(NULL, _T("Erro ao criar janela."),
+                   APP_TITLE, MB_OK | MB_ICONERROR);
         return 1;
     }
 
@@ -69,8 +75,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
     switch (uMsg) {
     case WM_CREATE:
     {
-        abrirRecursos(&g_estado);
         g_estado.hwndMain = hwnd;
+        abrirRecursos(&g_estado);
         return 0;
     }
 
@@ -80,10 +86,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
         HDC hdc = BeginPaint(hwnd, &ps);
         RECT rc;
         GetClientRect(hwnd, &rc);
-        
+
         FillRect(hdc, &rc, (HBRUSH)(COLOR_WINDOW + 1));
         desenharAlertas(hwnd, &g_estado, hdc, &rc);
-        
+
         EndPaint(hwnd, &ps);
         return 0;
     }
@@ -96,9 +102,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 
     case WM_APP_ENCERRAR:
     {
+        /* Mostrar aviso e destruir a janela de forma limpa */
         MessageBox(hwnd, _T("A plataforma central foi encerrada."),
                    APP_TITLE, MB_OK | MB_ICONINFORMATION);
-        PostQuitMessage(0);
+        DestroyWindow(hwnd);
         return 0;
     }
 
@@ -106,14 +113,15 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
     {
         int totalAlertas = contarAlertasAtivos(&g_estado);
         int totalPaginas = (totalAlertas + g_estado.maxAlertas - 1) / g_estado.maxAlertas;
+        if (totalPaginas < 1) totalPaginas = 1;
 
-        if (wParam == VK_NEXT) {  // Page Down
+        if (wParam == VK_NEXT) {  /* Page Down */
             if (g_estado.paginaAtual < totalPaginas - 1) {
                 g_estado.paginaAtual++;
                 InvalidateRect(hwnd, NULL, TRUE);
             }
         }
-        else if (wParam == VK_PRIOR) {  // Page Up
+        else if (wParam == VK_PRIOR) {  /* Page Up */
             if (g_estado.paginaAtual > 0) {
                 g_estado.paginaAtual--;
                 InvalidateRect(hwnd, NULL, TRUE);
@@ -135,15 +143,16 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
         case ID_FICHEIRO_ACERCA:
             MessageBox(hwnd,
                        _T("Monitor de Alertas\n\n")
-                       _T("Grupo: [Nome do Aluno 1], [Número]\n")
-                       _T("       [Nome do Aluno 2], [Número]\n\n")
+                       _T("Grupo: [Nome do Aluno 1], [N\xfamero]\n")
+                       _T("       [Nome do Aluno 2], [N\xfamero]\n\n")
                        _T("Sistemas Operativos 2 - 2025/26"),
                        _T("Acerca do Monitor"),
                        MB_OK | MB_ICONINFORMATION);
             return 0;
 
         case ID_FICHEIRO_SAIR:
-            PostQuitMessage(0);
+            /* Destruir a janela -> WM_DESTROY faz a limpeza */
+            DestroyWindow(hwnd);
             return 0;
         }
         return 0;
@@ -175,11 +184,9 @@ void abrirRecursos(EstadoMonitor* estado)
     );
 
     if (estado->hFileMapping == NULL) {
-        _tprintf(_T("Erro ao abrir file mapping '%s': %lu\n"),
-            estado->nomeSHM, GetLastError());
         MessageBox(estado->hwndMain,
-            _T("Não foi possível abrir a memória partilhada.\n")
-            _T("Certifique-se que o Central está a correr."),
+            _T("N\xe3o foi poss\xedvel abrir a mem\xf3ria partilhada.\n")
+            _T("Certifique-se que o Central est\xe1 a correr."),
             APP_TITLE, MB_OK | MB_ICONERROR);
         return;
     }
@@ -192,13 +199,15 @@ void abrirRecursos(EstadoMonitor* estado)
     );
 
     if (estado->pShm == NULL) {
-        _tprintf(_T("Erro ao mapear vista: %lu\n"), GetLastError());
         CloseHandle(estado->hFileMapping);
         estado->hFileMapping = NULL;
+        MessageBox(estado->hwndMain,
+            _T("Erro ao mapear a mem\xf3ria partilhada."),
+            APP_TITLE, MB_OK | MB_ICONERROR);
         return;
     }
 
-    /* Abrir evento de notificação */
+    /* Abrir evento de notificacao */
     estado->hEvento = OpenEvent(
         SYNCHRONIZE,
         FALSE,
@@ -206,32 +215,34 @@ void abrirRecursos(EstadoMonitor* estado)
     );
 
     if (estado->hEvento == NULL) {
-        _tprintf(_T("Erro ao abrir evento '%s': %lu\n"),
-            estado->nomeEvento, GetLastError());
         UnmapViewOfFile(estado->pShm);
         CloseHandle(estado->hFileMapping);
         estado->pShm = NULL;
         estado->hFileMapping = NULL;
+        MessageBox(estado->hwndMain,
+            _T("Erro ao abrir o evento de notifica\xe7\xe3o."),
+            APP_TITLE, MB_OK | MB_ICONERROR);
         return;
     }
 
-    /* Lançar thread de escuta */
+    /* Lancar thread de escuta */
+    estado->terminar = FALSE;
     estado->hThreadEscuta = CreateThread(
         NULL, 0, threadEscuta, estado, 0, NULL
     );
 
     if (estado->hThreadEscuta == NULL) {
-        _tprintf(_T("Erro ao criar thread de escuta: %lu\n"), GetLastError());
         CloseHandle(estado->hEvento);
         UnmapViewOfFile(estado->pShm);
         CloseHandle(estado->hFileMapping);
         estado->hEvento = NULL;
         estado->pShm = NULL;
         estado->hFileMapping = NULL;
+        MessageBox(estado->hwndMain,
+            _T("Erro ao criar thread de escuta."),
+            APP_TITLE, MB_OK | MB_ICONERROR);
         return;
     }
-
-    _tprintf(_T("Monitor conectado à plataforma.\n"));
 }
 
 void fecharRecursos(EstadoMonitor* estado)
@@ -239,32 +250,40 @@ void fecharRecursos(EstadoMonitor* estado)
     if (estado == NULL)
         return;
 
+    /* Sinalizar a thread de escuta para terminar */
     EnterCriticalSection(&estado->cs);
     estado->terminar = TRUE;
     LeaveCriticalSection(&estado->cs);
 
+    /* Desbloquear a thread de escuta que pode estar em WaitForSingleObject */
+    if (estado->hEvento != NULL) {
+        SetEvent(estado->hEvento);
+    }
+
+    /* Aguardar que a thread de escuta termine (maximo 3 segundos) */
     if (estado->hThreadEscuta != NULL) {
-        WaitForSingleObject(estado->hThreadEscuta, 5000);
+        WaitForSingleObject(estado->hThreadEscuta, 3000);
         CloseHandle(estado->hThreadEscuta);
         estado->hThreadEscuta = NULL;
     }
 
+    /* Fechar evento */
     if (estado->hEvento != NULL) {
         CloseHandle(estado->hEvento);
         estado->hEvento = NULL;
     }
 
+    /* Desfazer o mapeamento da SHM */
     if (estado->pShm != NULL) {
         UnmapViewOfFile(estado->pShm);
         estado->pShm = NULL;
     }
 
+    /* Fechar o file mapping */
     if (estado->hFileMapping != NULL) {
         CloseHandle(estado->hFileMapping);
         estado->hFileMapping = NULL;
     }
-
-    _tprintf(_T("Monitor desconectado.\n"));
 }
 
 DWORD WINAPI threadEscuta(LPVOID param)
@@ -282,19 +301,24 @@ DWORD WINAPI threadEscuta(LPVOID param)
 
         DWORD wait = WaitForSingleObject(hEvento, INFINITE);
 
-        if (wait == WAIT_OBJECT_0) {
-            EnterCriticalSection(&estado->cs);
-            BOOL desligar = (estado->pShm != NULL) ?
-                estado->pShm->desligar : FALSE;
-            LeaveCriticalSection(&estado->cs);
+        if (wait != WAIT_OBJECT_0)
+            break;
 
-            if (desligar) {
-                PostMessage(estado->hwndMain, WM_APP_ENCERRAR, 0, 0);
-                break;
-            }
-            else {
-                PostMessage(estado->hwndMain, WM_APP_ATUALIZAR, 0, 0);
-            }
+        /* Reler o estado terminar apos acordar */
+        EnterCriticalSection(&estado->cs);
+        terminar = estado->terminar;
+        BOOL desligar = (estado->pShm != NULL) ? estado->pShm->desligar : FALSE;
+        LeaveCriticalSection(&estado->cs);
+
+        if (terminar)
+            break;
+
+        if (desligar) {
+            PostMessage(estado->hwndMain, WM_APP_ENCERRAR, 0, 0);
+            break;
+        }
+        else {
+            PostMessage(estado->hwndMain, WM_APP_ATUALIZAR, 0, 0);
         }
     }
 
@@ -324,18 +348,23 @@ int contarAlertasAtivos(EstadoMonitor* estado)
 void desenharAlertas(HWND hwnd, EstadoMonitor* estado, HDC hdc, RECT* rc)
 {
     if (estado == NULL || estado->pShm == NULL) {
-        TextOut(hdc, 10, 10,
-            _T("A aguardar ligação ao Central..."), 33);
+        TCHAR semConn[] = _T("A aguardar liga\xe7\xe3o ao Central...");
+        TextOut(hdc, 10, 10, semConn, (int)_tcslen(semConn));
         return;
     }
 
     EnterCriticalSection(&estado->cs);
 
-    int totalAlertas = contarAlertasAtivos(estado);
+    /* Contar alertas ativos dentro da CS (sem chamar contarAlertasAtivos para evitar re-entrancia) */
+    int totalAlertas = 0;
+    for (int i = 0; i < MAX_PLACARES; i++) {
+        if (estado->pShm->placar[i].identificador != 0)
+            totalAlertas++;
+    }
 
     if (totalAlertas == 0) {
-        TextOut(hdc, 10, 10,
-            _T("Sem alertas ativos."), 19);
+        TCHAR semAlertas[] = _T("Sem alertas ativos.");
+        TextOut(hdc, 10, 10, semAlertas, (int)_tcslen(semAlertas));
         LeaveCriticalSection(&estado->cs);
         return;
     }
@@ -352,7 +381,7 @@ void desenharAlertas(HWND hwnd, EstadoMonitor* estado, HDC hdc, RECT* rc)
             if (count >= indiceInicio && mostrados < estado->maxAlertas) {
                 TCHAR linha[256];
                 _sntprintf_s(linha, 256, _TRUNCATE,
-                    _T("ID: %lu | %s | Duração: %lu s"),
+                    _T("ID: %lu | %s | Dura\xe7\xe3o: %lu s"),
                     estado->pShm->placar[i].identificador,
                     estado->pShm->placar[i].msg,
                     estado->pShm->placar[i].duracao
@@ -366,18 +395,18 @@ void desenharAlertas(HWND hwnd, EstadoMonitor* estado, HDC hdc, RECT* rc)
         }
     }
 
-    /* Mostrar indicador de página */
+    /* Mostrar indicador de pagina se necessario */
     if (totalPaginas > 1) {
         TCHAR rodape[64];
         _sntprintf_s(rodape, 64, _TRUNCATE,
-            _T("Página %d/%d"),
+            _T("P\xe1gina %d/%d  (Page Up / Page Down para navegar)"),
             estado->paginaAtual + 1, totalPaginas
         );
 
         RECT rcRodape = *rc;
         rcRodape.top = rcRodape.bottom - 30;
         DrawText(hdc, rodape, (int)_tcslen(rodape), &rcRodape,
-            DT_CENTER | DT_VCENTER);
+            DT_CENTER | DT_VCENTER | DT_SINGLELINE);
     }
 
     LeaveCriticalSection(&estado->cs);
@@ -393,8 +422,8 @@ INT_PTR CALLBACK DlgProcConfig(HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lPara
         TCHAR szTemp[16];
         _sntprintf_s(szTemp, 16, _TRUNCATE, _T("%d"), g_estado.maxAlertas);
         SetDlgItemText(hDlg, IDC_EDIT_MAX_ALERTAS, szTemp);
-        SetDlgItemText(hDlg, IDC_EDIT_NOME_SHM, g_estado.nomeSHM);
-        SetDlgItemText(hDlg, IDC_EDIT_NOME_EVENTO, g_estado.nomeEvento);
+        SetDlgItemText(hDlg, IDC_EDIT_NOME_SHM,    g_estado.nomeSHM);
+        SetDlgItemText(hDlg, IDC_EDIT_NOME_EVENTO,  g_estado.nomeEvento);
 
         return TRUE;
     }
@@ -407,27 +436,27 @@ INT_PTR CALLBACK DlgProcConfig(HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lPara
             TCHAR szTemp[MAX_PATH];
             int maxAlertas;
 
-            /* Ler novo máximo de alertas */
+            /* Ler novo maximo de alertas */
             GetDlgItemText(hDlg, IDC_EDIT_MAX_ALERTAS, szTemp, 16);
             maxAlertas = _tcstol(szTemp, NULL, 10);
 
             if (maxAlertas < 1 || maxAlertas > 20) {
                 MessageBox(hDlg,
-                    _T("Máximo de alertas deve estar entre 1 e 20."),
+                    _T("M\xe1ximo de alertas deve estar entre 1 e 20."),
                     _T("Erro"), MB_OK | MB_ICONERROR);
                 return TRUE;
             }
 
-            /* Ler novos nomes */
+            /* Ler novo nome SHM */
             GetDlgItemText(hDlg, IDC_EDIT_NOME_SHM, szTemp, MAX_PATH);
             if (_tcslen(szTemp) == 0) {
                 MessageBox(hDlg,
-                    _T("Nome SHM não pode estar vazio."),
+                    _T("Nome SHM n\xe3o pode estar vazio."),
                     _T("Erro"), MB_OK | MB_ICONERROR);
                 return TRUE;
             }
 
-            /* Actualizar estado */
+            /* Actualizar estado global */
             EnterCriticalSection(&g_estado.cs);
             g_estado.maxAlertas = maxAlertas;
             _tcscpy_s(g_estado.nomeSHM, MAX_PATH, szTemp);
@@ -438,9 +467,8 @@ INT_PTR CALLBACK DlgProcConfig(HWND hDlg, UINT uMsg, WPARAM wParam, LPARAM lPara
             }
             LeaveCriticalSection(&g_estado.cs);
 
-            /* Se nomes mudaram, reconectar */
+            /* Se os nomes dos recursos mudaram, reconectar */
             fecharRecursos(&g_estado);
-            Sleep(100);  // Dar tempo a fechar
             abrirRecursos(&g_estado);
 
             g_estado.paginaAtual = 0;
