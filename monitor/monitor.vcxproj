@@ -141,6 +141,13 @@
   <ItemGroup>
     <ClCompile Include="monitor.c" />
   </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="monitor.h" />
+    <ClInclude Include="resource.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="monitor.rc" />
+  </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>
