@@ -143,8 +143,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
         case ID_FICHEIRO_ACERCA:
             MessageBox(hwnd,
                        _T("Monitor de Alertas\n\n")
-                       _T("Grupo: [Nome do Aluno 1], [N\xfamero]\n")
-                       _T("       [Nome do Aluno 2], [N\xfamero]\n\n")
+                       _T("Grupo:\t2024134573, Gabriel Dinis Paixao dos Santos\n")
+                       _T("\t2024120298, Diogo Simoes Martins\n\n")
                        _T("Sistemas Operativos 2 - 2025/26"),
                        _T("Acerca do Monitor"),
                        MB_OK | MB_ICONINFORMATION);
