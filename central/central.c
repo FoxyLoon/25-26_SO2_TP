@@ -9,6 +9,9 @@
 
 static EstadoCentral g_estado;
 
+/* Mutex global nomeado para proteger o acesso a cada named pipe */
+HANDLE g_hMutexPipe = NULL;
+
 /* -----------------------------------------------------------------------
  * main
  * ----------------------------------------------------------------------- */
@@ -56,6 +59,24 @@ BOOL inicializar_central(EstadoCentral* estado, int argc, TCHAR* argv[])
 
 	_tcscpy_s(estado->nomePipe, _countof(estado->nomePipe), argv[1]);
 	_sntprintf_s(estado->nomePipeCompleto, _countof(estado->nomePipeCompleto), _TRUNCATE, _T("%s%s"), PIPE_PREFIX, estado->nomePipe);
+
+	/* Criar mutex nomeado para impedir múltiplas instâncias com o mesmo pipe */
+	TCHAR nomeMutex[MAX_PATH];
+	_sntprintf_s(nomeMutex, MAX_PATH, _TRUNCATE, _T("MUTEX_PIPE_%s"), estado->nomePipe);
+
+	g_hMutexPipe = CreateMutex(NULL, TRUE, nomeMutex);
+	if (g_hMutexPipe == NULL) {
+		_tprintf(_T("Erro ao criar mutex: %lu\n"), GetLastError());
+		return FALSE;
+	}
+
+	/* Verificar se o mutex já estava criado (significa que já existe uma instância com este pipe) */
+	if (GetLastError() == ERROR_ALREADY_EXISTS) {
+		_tprintf(_T("Erro: Ja existe uma instancia do central com o named pipe '%s'.\n"), estado->nomePipe);
+		CloseHandle(g_hMutexPipe);
+		g_hMutexPipe = NULL;
+		return FALSE;
+	}
 
 	InitializeCriticalSection(&estado->cs);
 
@@ -147,6 +168,13 @@ BOOL libertar_central(EstadoCentral* estado)
 	if (estado->hEventMonitor != NULL) {
 		CloseHandle(estado->hEventMonitor);
 		estado->hEventMonitor = NULL;
+	}
+
+	/* Libertar o mutex nomeado */
+	if (g_hMutexPipe != NULL) {
+		ReleaseMutex(g_hMutexPipe);
+		CloseHandle(g_hMutexPipe);
+		g_hMutexPipe = NULL;
 	}
 
 	DeleteCriticalSection(&estado->cs);
