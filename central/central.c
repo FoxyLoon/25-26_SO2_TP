@@ -65,6 +65,63 @@ BOOL inicializar_central(EstadoCentral* estado, int argc, TCHAR* argv[])
 	estado->hPipeListener = INVALID_HANDLE_VALUE;
 	memset(estado->placares, 0, sizeof(estado->placares));
 
+	/* M3: inicializar campos SHM */
+	estado->hFileMapping = NULL;
+	estado->pShm = NULL;
+	estado->hEventMonitor = NULL;
+
+	/* Criar memoria partilhada para o(s) monitor(s) */
+	_tcscpy_s(estado->nomeSHM, MAX_PATH, _T("SHM_PLACARES"));
+
+	estado->hFileMapping = CreateFileMapping(
+		INVALID_HANDLE_VALUE,
+		NULL,
+		PAGE_READWRITE,
+		0,
+		sizeof(SHM_ALERTA),
+		estado->nomeSHM
+	);
+
+	if (estado->hFileMapping == NULL) {
+		_tprintf(_T("Erro ao criar file mapping: %lu\n"), GetLastError());
+		DeleteCriticalSection(&estado->cs);
+		return FALSE;
+	}
+
+	estado->pShm = (SHM_ALERTA*)MapViewOfFile(
+		estado->hFileMapping,
+		FILE_MAP_ALL_ACCESS,
+		0, 0, 0
+	);
+
+	if (estado->pShm == NULL) {
+		_tprintf(_T("Erro ao mapear vista: %lu\n"), GetLastError());
+		CloseHandle(estado->hFileMapping);
+		estado->hFileMapping = NULL;
+		DeleteCriticalSection(&estado->cs);
+		return FALSE;
+	}
+
+	ZeroMemory(estado->pShm, sizeof(SHM_ALERTA));
+
+	/* Criar evento nomeado para sincronizacao com monitores (auto-reset) */
+	estado->hEventMonitor = CreateEvent(
+		NULL,
+		FALSE,  /* auto-reset */
+		FALSE,  /* initial state: nao assinalado */
+		EVENT_NOTIFICAR
+	);
+
+	if (estado->hEventMonitor == NULL) {
+		_tprintf(_T("Erro ao criar evento monitor: %lu\n"), GetLastError());
+		UnmapViewOfFile(estado->pShm);
+		estado->pShm = NULL;
+		CloseHandle(estado->hFileMapping);
+		estado->hFileMapping = NULL;
+		DeleteCriticalSection(&estado->cs);
+		return FALSE;
+	}
+
 	return TRUE;
 }
 
@@ -75,6 +132,23 @@ BOOL libertar_central(EstadoCentral* estado)
 			CloseHandle(estado->placares[i].hPipe);
 		}
 	}
+
+	/* M3: libertar recursos de memoria partilhada */
+	if (estado->pShm != NULL) {
+		UnmapViewOfFile(estado->pShm);
+		estado->pShm = NULL;
+	}
+
+	if (estado->hFileMapping != NULL) {
+		CloseHandle(estado->hFileMapping);
+		estado->hFileMapping = NULL;
+	}
+
+	if (estado->hEventMonitor != NULL) {
+		CloseHandle(estado->hEventMonitor);
+		estado->hEventMonitor = NULL;
+	}
+
 	DeleteCriticalSection(&estado->cs);
 
 	return TRUE;
@@ -213,6 +287,9 @@ DWORD WINAPI threadPlacar(LPVOID param)
 
 			_tprintf(_T("\n[Alerta TERMINOU no placar %lu]\n> "),
 				estado->placares[idx].identificador);
+
+			/* M3: atualizar SHM apos fim de alerta reportado pelo placar */
+			atualizarSHM(estado);
 
 			break;
 		}
@@ -378,28 +455,14 @@ void executarAlerta(const TCHAR* msg, DWORD duracao, DWORD idPlacar, EstadoCentr
 				continue;
 			}
 
-			// ==============================
-			// 20260521 - Adicionado confirmação da receção do alerta
-			// MSG_ALERTA confirmacao;
-			// DWORD bytesLidos;
-
-			// if (!receberMensagem(hPipe, &confirmacao, sizeof(confirmacao), &bytesLidos)) {
-			// 	_tprintf(_T("Falha ao receber confirmacao do placar indice %d.\n"), i);
-			// 	continue;
-			// }
-
-			// if (confirmacao.tipo != MSG_TIPO_ALERTA) {
-			// 	_tprintf(_T("Confirmacao invalida do placar indice %d.\n"), i);
-			// 	continue;
-			// }
-
-			// ==============================
-
 			EnterCriticalSection(&estado->cs);
 			estado->placares[i].temAlerta = TRUE;
 			estado->placares[i].alertaAtivo = alerta;
 			LeaveCriticalSection(&estado->cs);
 		}
+
+		/* M3: atualizar SHM depois de processar todos os placares (broadcast) */
+		atualizarSHM(estado);
 	}
 	else {
 		EnterCriticalSection(&estado->cs);
@@ -416,32 +479,10 @@ void executarAlerta(const TCHAR* msg, DWORD duracao, DWORD idPlacar, EstadoCentr
 				estado->placares[idx].temAlerta = TRUE;
 				estado->placares[idx].alertaAtivo = alerta;
 				LeaveCriticalSection(&estado->cs);
+
+				/* M3: atualizar SHM apos alerta enviado com sucesso */
+				atualizarSHM(estado);
 			}
-
-			// 20260521 - Adicionado confirmação da receção do alerta
-			// Especifico para UM placar específico
-			// if (!enviarMensagem(hPipe, &alerta, sizeof(alerta))) {
-			// 	_tprintf(_T("Falha ao enviar alerta para placar ID %lu.\n"), idPlacar);
-			// }
-			// else {
-			// 	MSG_ALERTA confirmacao;
-			// 	DWORD bytesLidos;
-
-			// 	if (!receberMensagem(hPipe, &confirmacao, sizeof(confirmacao), &bytesLidos)) {
-			// 		_tprintf(_T("Falha ao receber confirmacao do placar ID %lu.\n"), idPlacar);
-			// 		return;
-			// 	}
-
-			// 	if (confirmacao.tipo != MSG_TIPO_ALERTA) {
-			// 		_tprintf(_T("Tempo de mensagem terminado para o placar do ID %lu.\n"), idPlacar);
-			// 		return;
-			// 	}
-
-			// 	EnterCriticalSection(&estado->cs);
-			// 	estado->placares[idx].temAlerta = TRUE;
-			// 	estado->placares[idx].alertaAtivo = alerta;
-			// 	LeaveCriticalSection(&estado->cs);
-			// }
 		}
 		else {
 			_tprintf(_T("Placar com ID %lu nao encontrado.\n"), idPlacar);
@@ -475,7 +516,7 @@ void executarCancelar(DWORD idPlacar, EstadoCentral* estado)
 	}
 
 	// ==============================
-	// 20260521 - Adicionado confirmação da receção do cancelamento
+	// 20260521 - Adicionado confirmaï¿½ï¿½o da receï¿½ï¿½o do cancelamento
 	// MSG_CMD_CP confirmacao;
 	// DWORD bytesLidos;
 
@@ -494,6 +535,9 @@ void executarCancelar(DWORD idPlacar, EstadoCentral* estado)
 	EnterCriticalSection(&estado->cs);
 	estado->placares[idx].temAlerta = FALSE;
 	LeaveCriticalSection(&estado->cs);
+
+	/* M3: atualizar SHM apos cancelamento */
+	atualizarSHM(estado);
 }
 
 void executarListar(EstadoCentral* estado)
@@ -539,8 +583,18 @@ void executarEncerrar(EstadoCentral* estado)
 		estado->hPipeListener = INVALID_HANDLE_VALUE;
 	}
 
+	/* M3: assinalar encerramento na SHM antes de notificar monitores */
+	if (estado->pShm != NULL) {
+		estado->pShm->desligar = TRUE;
+	}
+
 	estado->terminar = TRUE;
 	LeaveCriticalSection(&estado->cs);
+
+	/* M3: notificar monitores do encerramento (fora da CS) */
+	if (estado->hEventMonitor != NULL) {
+		SetEvent(estado->hEventMonitor);
+	}
 }
 
 /* -----------------------------------------------------------------------
@@ -641,6 +695,44 @@ void removerPlacar(EstadoCentral* estado, int indice)
 	memset(&estado->placares[indice].alertaAtivo, 0, sizeof(MSG_ALERTA));
 	estado->numPlacares--;
 	LeaveCriticalSection(&estado->cs);
+
+	/* M3: atualizar SHM apos remocao do placar */
+	atualizarSHM(estado);
+}
+
+/* -----------------------------------------------------------------------
+ * Memoria partilhada
+ * ----------------------------------------------------------------------- */
+
+void atualizarSHM(EstadoCentral* estado)
+{
+	if (estado == NULL || estado->pShm == NULL)
+		return;
+
+	EnterCriticalSection(&estado->cs);
+
+	/* Limpar toda a SHM antes de reescrever */
+	ZeroMemory(estado->pShm, sizeof(SHM_ALERTA));
+
+	/* Copiar dados dos placares ativos com alertas */
+	for (int i = 0; i < MAX_PLACARES; i++) {
+		if (estado->placares[i].ativo && estado->placares[i].temAlerta) {
+			estado->pShm->placar[i].identificador =
+				estado->placares[i].identificador;
+			estado->pShm->placar[i].duracao =
+				estado->placares[i].alertaAtivo.duracao;
+			_tcscpy_s(
+				estado->pShm->placar[i].msg,
+				MAX_MSG_LEN,
+				estado->placares[i].alertaAtivo.msg
+			);
+		}
+	}
+
+	LeaveCriticalSection(&estado->cs);
+
+	/* Sinalizar monitores (fora da CS para nao segurar o lock desnecessariamente) */
+	SetEvent(estado->hEventMonitor);
 }
 
 /* -----------------------------------------------------------------------
