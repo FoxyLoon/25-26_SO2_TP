@@ -85,7 +85,7 @@ O projeto aplica rigorosamente os conceitos de Sistemas Operativos 2:
 - Máximo de placares suportados: 20 (`MAX_PLACARES`).
 
 ## Equipa
-- **Membros:** `Diogo Simões Martins - 2024120298` | `Gabriel Dinis Paixão dos Santos -2024134573`
+- **Membros:** `Diogo Simões Martins - 2024120298` | `Gabriel Dinis Paixão dos Santos - 2024134573`
 - **Curso:** Engenharia Informática - DEIS
 - **Ano Letivo:** 2025/2026
 - **Disciplina:** Sistemas Operativos 2
