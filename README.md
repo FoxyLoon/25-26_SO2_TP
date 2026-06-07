@@ -65,8 +65,7 @@ Abrir `25-26_SO2_TP.sln` no Visual Studio e compilar (plataforma **x64**).
 ### Linha de comandos (MSVC `cl.exe`)
 
 ```bash
-cl /DUNICODE /D_UNICODE /O2 central.c /link /OUT:central.exe
-cl /DUNICODE /D_UNICODE /O2 placar.c /link /OUT:placar.exe
+cl /DUNICODE /D_UNICODE /Iplacar /O2 placar/placar.c /link /OUT:placar.exe
 ```
 
 > **Nota**: O suporte a GCC/MinGW mencionado em versões anteriores é **inválido** — as APIs Win32 utilizadas (Named Pipes, WaitableTimers, CreateFileMapping, RegOpenKeyEx, etc.) **não são portáteis**.
@@ -179,13 +178,11 @@ typedef struct { BYTE tipo; } MSG_CMD_CP;   /* MSG_TIPO_CANCELAR(5) | ENCERRAR(6
 
 ```c
 typedef struct {
-    DWORD identificador;     /* ID do placar associado ao alerta */
-    DWORD duracao;           /* Tempo total do alerta em segundos */
-    TCHAR msg[MAX_MSG_LEN];  /* Texto descritivo (140 caracteres) */
-} PlacarAlerta;
-
-typedef struct {
-    PlacarAlerta placar[MAX_PLACARES]; /* Array de até 20 placares */
+    struct {
+        DWORD identificador;     /* ID do placar associado ao alerta */
+        DWORD duracao;           /* Tempo total do alerta em segundos */
+        TCHAR msg[MAX_MSG_LEN];  /* Texto descritivo (140 caracteres) */
+    } placar[MAX_PLACARES];      /* Array de até 20 placares */
     BOOL desligar;              /* Flag global de encerramento */
 } SHM_ALERTA;
 ```
@@ -197,7 +194,7 @@ typedef struct {
 | `MAX_PLACARES` | 20 | Número máximo de placares suportados |
 | `MAX_MSG_LEN` | 140 | Comprimento máximo de mensagem (chars) |
 | `EVENT_NOTIFICAR` | `"notificar"` | Nome do evento de atualização SHM |
-| `PIPE_BUFFER_SIZE` | 512 | Buffer do Named Pipe (apenas em `central.h`) |
+| `PIPE_BUFFER_SIZE` | 512 | Buffer do Named Pipe (`central/central.h` e `placar/placar.h`) |
 
 ## Notas e Limitações
 
