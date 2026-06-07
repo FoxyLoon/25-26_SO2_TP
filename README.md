@@ -1,97 +1,181 @@
-# Plataforma de Alertas Rodoviários - "Placar Informativo"
+# Plataforma de Alertas Rodoviárias - "Placar Informativo"
 
 ## Descrição do Projeto
-Implementação do Trabalho Laboratorial da unidade curricular de Sistemas Operativos 2. O projeto consiste na criação de uma plataforma de distribuição de alertas informativos para utilização em vias rodoviárias. A arquitetura é composta por processos independentes que comunicam através de mecanismos de IPC (Inter-Process Communication) do Windows, simulando um sistema real de gestão de informação rodoviária.
+
+Implementação do Trabalho Laboratorial da unidade curricular de **Sistemas Operativos 2**. O projeto consiste na criação de uma plataforma de distribuição de alertas informativos para utilização em vias rodoviárias, simulando um sistema real de gestão de informação rodoviária.
+
+A arquitetura é composta por **três processos independentes** que comunicam através de mecanismos de **IPC (Inter-Process Communication)** do Windows, incluindo Named Pipes, Memória Partilhada e Eventos do Kernel.
 
 ## Arquitetura e Componentes
-O sistema é composto por três programas principais:
 
-| Componente | Tipo | Descrição |
-|------------|------|-----------|
-| **central** | Servidor | Programa gestor. Atribui identificadores únicos aos placares, gere o ciclo de vida das ligações, envia alertas, cancela notificações e encerra a plataforma de forma controlada. |
-| **placar** | Cliente | Simula um painel informativo rodoviário. Liga-se à central, recebe e exibe alertas com temporização, e notifica o fim da duração do alerta. |
-| **monitor** | Cliente (GUI) | Interface gráfica que monitoriza os alertas ativos via memória partilhada, com atualização em tempo real por eventos do kernel. |
+O sistema adota uma arquitetura híbrida Cliente-Servidor / Produtor-Consumidor, com os seguintes componentes:
+
+| Componente | Tipo | Descrição | Direção |
+|------------|------|-----------|---------|
+| **central** | Servidor | Programa gestor. Atribui identificadores únicos, gere ligações, envia/cancela alertas e encerra a plataforma. | — |
+| **placar** | Cliente | Simula um painel informativo rodoviário. Liga-se à central, recebe/exibe alertas com temporização, notifica fim de alerta. | ← central |
+| **monitor** | Cliente (GUI) | Interface gráfica que monitoriza alertas ativos via memória partilhada, com atualização em tempo real por eventos. | ← central |
+
+### Diagrama de Arquitetura
+
+```
+            +---------------------------------------+
+            |         CENTRAL (central.exe)         |
+            |  - Thread Listener (Named Pipe)       |
+            |  - Thread Utilizador (CLI)            |
+            |  - Threads Dedicadas por Placar       |
+            +---+-------------------------------+---+
+                |                               |
+  (Named Pipes) |                               | (Memória Partilhada)
+  Bidirecionais  |                               | + Evento "notificar"
+                v                               v
+      +--------------------+           +--------------------+
+      | PLACAR (placar.exe)|           | MONITOR (monitor   |
+      | - Thread CLI       |           |   .exe)            |
+      | - Thread Alertas   |           | - Thread Escuta    |
+      |   (Overlapped I/O) |           | - Interface Win32  |
+      +--------------------+           +--------------------+
+```
+
+### Modelo de Threads
+
+| Processo | Thread | Função |
+|----------|--------|--------|
+| `central` | `threadListener` | Aceita ligações de placares via Named Pipe |
+| `central` | `threadPlacar[N]` | Gerencia comunicação com cada placar individualmente |
+| `central` | `threadUtilizador_central` | Interface CLI do administrador |
+| `placar` | `threadUtilizador` | Interface CLI do instalador |
+| `placar` | `threadAlertas` | I/O assíncrono (overlapped) + temporização de alertas |
+| `monitor` | `threadEscuta` | Espera por evento de atualização do SHM |
+| `monitor` | `WndProc` | Interface gráfica Win32 |
 
 ## Pré-requisitos
-- Sistema Operativo: Windows (API Win32 obrigatória)
-- Compilador: MSVC (Visual Studio) — toolset `v143` (VS 2022) para `central` e `placar`; toolset `v145` para `monitor`
-- Bibliotecas: Windows SDK (`windows.h`, `winbase.h`, `winreg.h`)
-- Acesso à chave de registo: `HKEY_CURRENT_USER\Software\TrabSO2`
+
+- **Sistema Operativo**: Windows (API Win32 obrigatória) — **não é portátil para Linux/macOS**
+- **Compilador**: MSVC (Visual Studio) — **toolset `v143` (VS 2022)**
+- **Bibliotecas**: Windows SDK (`windows.h`, `winbase.h`, `winreg.h`)
+- **Registo Windows**: Acesso a `HKEY_CURRENT_USER\Software\TrabSO2`
 
 ## Construção (Build)
 
 ### Visual Studio
-Abrir `25-26_SO2_TP.sln` no Visual Studio e compilar (plataforma x64).
+
+Abrir `25-26_SO2_TP.sln` no Visual Studio e compilar (plataforma **x64**).
 
 ### Linha de comandos (MSVC `cl.exe`)
+
 ```bash
 cl /DUNICODE /D_UNICODE /O2 central.c /link /OUT:central.exe
 cl /DUNICODE /D_UNICODE /O2 placar.c /link /OUT:placar.exe
 ```
 
-### Linha de comandos (GCC/MinGW)
-```bash
-gcc -DUNICODE -D_UNICODE -O2 central.c -o central.exe -lkernel32 -ladvapi32
-gcc -DUNICODE -D_UNICODE -O2 placar.c -o placar.exe -lkernel32 -ladvapi32
-```
+> **Nota**: O suporte a GCC/MinGW mencionado em versões anteriores é **inválido** — as APIs Win32 utilizadas (Named Pipes, WaitableTimers, CreateFileMapping, RegOpenKeyEx, etc.) **não são portáteis**.
 
 ## Utilização
 
+> **Ordem de arranque**: central → placar → monitor
+
 ### 1. Programa Central
-Deve ser executado primeiro. Recebe o nome base do Named Pipe como argumento.
+
+Deve ser executado **primeiro**. Recebe o nome base do Named Pipe como argumento.
+
 ```bash
 central.exe tubo
 ```
+
 O nome completo do pipe será `\\.\pipe\tubo`.
 
 ### 2. Programa Placar
-Pode ser executado em múltiplas instâncias. O nome do pipe pode ser passado por linha de comandos ou lido automaticamente do Registo Windows.
+
+Pode ser executado em **múltiplas instâncias**. O nome do pipe pode ser passado por linha de comandos ou lido automaticamente do Registo Windows.
+
 ```bash
 placar.exe tubo
 ```
-Se omitido, o programa consulta o valor `NPIPE` em `HKCU\Software\TrabSO2`.
+
+Se omitido, o programa consulta o valor `NPIPE` em `HKCU\Software\TrabSO2`. Na primeira execução, grava automaticamente o nome do pipe no registo.
 
 ### 3. Programa Monitor
-Interface gráfica. Não necessita de argumentos.
+
+Interface gráfica. **Não necessita de argumentos**.
+
 ```bash
 monitor.exe
 ```
-Liga-se automaticamente à memória partilhada e ao evento de notificação para exibir os alertas ativos em tempo real.
+
+Liga-se automaticamente à memória partilhada `"SHM_PLACARES"` e ao evento `"notificar"` para exibir os alertas ativos em tempo real.
 
 ## Referência de Comandos
 
 ### Central (Administrador)
+
 | Comando | Sintaxe | Descrição |
 |---------|---------|-----------|
-| alerta | `alerta <msg> <duracao_s> <id_placar>` | Envia alerta. `id_placar=0` envia a todos os registados. |
-| cancelar | `cancelar <id_placar>` | Cancela o alerta ativo num placar específico. |
-| listar | `listar` | Mostra lista de placares ligados, IDs e alertas ativos. |
-| encerrar | `encerrar` | Fecha a plataforma e notifica todos os agentes. |
-| ajuda | `ajuda` | Mostra esta mensagem. |
+| `alerta` | `alerta <msg> <duracao_s> <id_placar>` | Envia alerta. `id_placar=0` envia a todos. |
+| `cancelar` | `cancelar <id_placar>` | Cancela o alerta ativo num placar. |
+| `listar` | `listar` | Mostra placares ligados, IDs e alertas ativos. |
+| `encerrar` | `encerrar` | Fecha a plataforma e notifica todos os agentes. |
+| `ajuda` | `ajuda` | Mostra esta mensagem. |
 
 ### Placar (Instalador)
+
 | Comando | Descrição |
 |---------|-----------|
-| liga | Estabelece ligação à central, obtém ID único e começa a escutar. |
-| desliga | Notifica a central e termina o processo de forma controlada. |
-| ajuda | Mostra ajuda específica do placar. |
+| `liga` | Estabelece ligação à central, obtém ID único e começa a escutar. |
+| `desliga` | Notifica a central e termina o processo de forma controlada. |
+| `ajuda` | Mostra ajuda específica do placar. |
 
 ## Mecanismos de Comunicação e Sincronização
-O projeto aplica rigorosamente os conceitos de Sistemas Operativos 2:
 
-| Mecanismo | Utilização no Projeto |
-|-----------|-----------------------|
-| **Named Pipes** | IPC bidirecional `central` <-> `placar`. Configurados em `PIPE_TYPE_MESSAGE` e `PIPE_READMODE_MESSAGE`. Buffer: 512 bytes. |
-| **Memória Partilhada** | `central` <-> `monitor`: `CreateFileMapping` + `MapViewOfFile` com nome `NOME_SHM_PADRAO`. Permite ao monitor ler o estado dos alertas em tempo real. |
-| **Eventos do Kernel** | `EVENT_NOTIFICAR` (`"notificar"`): `central` sinaliza com `SetEvent` sempre que há alteração de estado SHM; `monitor` espera com `WaitForSingleObject`. |
-| **I/O Assíncrono (Overlapped)** | `placar`: `ReadFile` com `OVERLAPPED` + `HANDLE` de evento para evitar bloqueios na thread de alertas. `central`: `ConnectNamedPipe` bloqueante por slot. |
-| **Sincronização de Estado** | `CRITICAL_SECTION` protege o array `placares[]`, contadores e flags de estado partilhadas entre threads. |
-| **Temporização** | `CreateWaitableTimer` gerencia a duração dos alertas no placar. O timer é sinalizado quando a duração expira, desencadeando a limpeza e notificação `MSG_TIPO_FIM_ALERTA`. |
-| **Gestão de Threads** | `central`: Modelo *Thread-per-Client* (`threadListener` aceita + `threadPlacar` por placar + `threadUtilizador_central` para CLI). `placar`: 2 threads (`threadUtilizador` para E/S consola, `threadAlertas` para I/O + timers). `monitor`: Thread GUI principal + `threadEscuta` (evento-driven). |
-| **Registo Windows** | Persistência do nome do pipe via `RegCreateKeyEx`/`RegSetValueEx` e `RegOpenKeyEx`/`RegQueryValueEx`. |
+### Named Pipes (Placar ↔ Central)
+
+- **Modo**: `PIPE_TYPE_MESSAGE` / `PIPE_READMODE_MESSAGE`
+- **Buffer**: 512 bytes
+- **Acesso**: Duplex (`PIPE_ACCESS_DUPLEX`)
+- **I/O**: Overlapped (`FILE_FLAG_OVERLAPPED`) no central; `ReadFile` + `WaitForMultipleObjects` no placar
+- **Nome**: `\\.\pipe\<pipe_name>`
+
+### Memória Partilhada (Central → Monitor)
+
+- **Nome do SHM**: `"SHM_PLACARES"`
+- **Mecanismo**: `CreateFileMapping` + `MapViewOfFile` (pagefile-backed)
+- **Escrita**: `atualizarSHM()` no central (linha ~735)
+- **Leitura**: `abrirRecursos()` no monitor (linha ~174)
+
+### Eventos do Kernel
+
+| Evento | Utilização | Processo que cria |
+|--------|------------|-------------------|
+| `"notificar"` (`EVENT_NOTIFICAR`) | Sinaliza alterações no SHM | `central` (`CreateEvent` ~linha 129) |
+| `hPipeEvent` | Sinaliza I/O overlapped disponível | `placar` |
+| `hWaitableTimer` | Temporização de duração de alertas | `placar` (`CreateWaitableTimer`) |
+
+### Sincronização
+
+| Primitiva | Contexto | Escopo | Justificação |
+|-----------|----------|--------|--------------|
+| `CRITICAL_SECTION` | Proteção de arrays `placares[]`, contadores, flags | Intra-processo | Alta performance para sincronização local |
+| Named Mutex `g_hMutexPipe` | Controlo de acesso ao Named Pipe | Inter-processo | Impede múltiplas instâncias do central com o mesmo pipe |
+| Named Event `"notificar"` | Notificação de atualização SHM | Inter-processo | Desbloqueia threads dormentes no monitor |
+| Waitable Timer | Duração de alertas no placar | Intra-processo | Precisão milimétrica sem desperdício de CPU |
 
 ## Estruturas de Dados Principais
-Todas definidas em `placar/common.h`:
+
+Definidas em **`placar/common.h`**:
+
+### Mensagens (Placar ↔ Central)
+
+```c
+/* Placar → Central */
+typedef struct { BYTE tipo; } MSG_CMD_PC;   /* MSG_TIPO_LIGAR(1) | DESLIGAR(2) | FIM_ALERTA(3) */
+
+/* Central → Placar */
+typedef struct { BYTE tipo; DWORD identificador; } MSG_ID;           /* MSG_TIPO_ID(7) */
+typedef struct { BYTE tipo; TCHAR msg[MAX_MSG_LEN]; DWORD duracao; } MSG_ALERTA;  /* MSG_TIPO_ALERTA(4) */
+typedef struct { BYTE tipo; } MSG_CMD_CP;   /* MSG_TIPO_CANCELAR(5) | ENCERRAR(6) */
+```
+
+### Memória Partilhada (Central → Monitor)
 
 ```c
 typedef struct {
@@ -106,14 +190,26 @@ typedef struct {
 } SHM_ALERTA;
 ```
 
+## Constantes
+
+| Constante | Valor | Descrição |
+|-----------|-------|-----------|
+| `MAX_PLACARES` | 20 | Número máximo de placares suportados |
+| `MAX_MSG_LEN` | 140 | Comprimento máximo de mensagem (chars) |
+| `EVENT_NOTIFICAR` | `"notificar"` | Nome do evento de atualização SHM |
+| `PIPE_BUFFER_SIZE` | 512 | Buffer do Named Pipe (apenas em `central.h`) |
+
 ## Notas e Limitações
-- O projeto está estritamente limitado ao ambiente Windows devido ao uso de APIs nativas (`CreateNamedPipe`, `WaitableTimer`, `RegOpenKeyEx`, `CreateFileMapping`, etc.).
-- Não é necessária autenticação ou passwords. Todos os processos partilham o mesmo contexto de utilizador.
-- O código segue boas práticas de limpeza de recursos (`CloseHandle`, `DeleteCriticalSection`, `free`) e tratamento de erros.
-- Máximo de placares suportados: 20 (`MAX_PLACARES`).
-- Máximo de comprimento de mensagem: 140 caracteres (`MAX_MSG_LEN`).
+
+- **Windows apenas**: O projeto utiliza APIs nativas Win32 (`CreateNamedPipe`, `WaitableTimer`, `RegOpenKeyEx`, `CreateFileMapping`, etc.) — **não compila em Linux/macOS**.
+- **Sem autenticação**: Todos os processos partilham o mesmo contexto de utilizador.
+- **Limpeza de recursos**: O código segue boas práticas (`CloseHandle`, `DeleteCriticalSection`, `free`) e tratamento de erros.
+- **Máximo de placares**: 20 (`MAX_PLACARES`).
+- **Máximo de comprimento de mensagem**: 140 caracteres (`MAX_MSG_LEN`).
+- **Unicode**: Todo o código usa `TCHAR`/`_T()` macros e APIs de caracteres largos (`_tprintf`, `_tcpy_s`, etc.).
 
 ## Estrutura do Projeto
+
 ```
 25-26_SO2_TP/
 ├── 25-26_SO2_TP.sln          # Solution Visual Studio
@@ -132,15 +228,17 @@ typedef struct {
 │   ├── monitor.rc             # Recurso da janela
 │   ├── resource.h             # IDs de recursos
 │   └── monitor.vcxproj        # Projeto Visual Studio
-├── readme.md                  # Este ficheiro
-└── relatorio.md               # Relatório técnico
+├── README.md                  # Este ficheiro
+└── relatorio.md               # Relatório técnico detalhado
 ```
 
 ## Equipa
-- **Membros:** `Diogo Simões Martins - 2024120298` | `Gabriel Dinis Paixão dos Santos - 2024134573`
-- **Curso:** Engenharia Informática - DEIS
-- **Ano Letivo:** 2025/2026
-- **Disciplina:** Sistemas Operativos 2
+
+- **Membros**: `Diogo Simões Martins - 2024120298` | `Gabriel Dinis Paixão dos Santos - 2024134573`
+- **Curso**: Engenharia Informática - DEIS
+- **Ano Letivo**: 2025/2026
+- **Disciplina**: Sistemas Operativos 2
 
 ---
+
 Projeto académico desenvolvido no âmbito da UC de Sistemas Operativos 2. Para dúvidas ou feedback, contactar o docente responsável.
